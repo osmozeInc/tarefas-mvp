@@ -1,0 +1,61 @@
+services:
+  # 1. Backend API (Laravel Docker)
+  - type: web
+    name: tarefas-mvp-api
+    runtime: docker
+    rootDir: backend
+    plan: free
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_KEY
+        sync: false
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_HOST
+        fromDatabase:
+          name: tarefas-mvp-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: tarefas-mvp-db
+          property: port
+      - key: DB_DATABASE
+        fromDatabase:
+          name: tarefas-mvp-db
+          property: database
+      - key: DB_USERNAME
+        fromDatabase:
+          name: tarefas-mvp-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: tarefas-mvp-db
+          property: password
+
+  # 2. Frontend PWA (React + Vite)
+  - type: web
+    name: tarefas-mvp-pwa
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+databases:
+  - name: tarefas-mvp-db
+    plan: free
+    databaseName: tarefas_mvp
+    user: laravel
