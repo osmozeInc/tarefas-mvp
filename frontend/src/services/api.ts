@@ -2,11 +2,10 @@ import axios from 'axios';
 
 const getBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
-  // Se estiver acessando pelo IP da rede local no celular, substitui localhost pelo IP da máquina host
-  if (envUrl && !envUrl.includes('localhost')) {
-    return envUrl;
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('temporario')) {
+    return envUrl.endsWith('/api') ? envUrl : `${envUrl.replace(/\/$/, '')}/api`;
   }
-  return `http://${window.location.hostname}:8000/api`;
+  return `${window.location.protocol}//${window.location.hostname}:8000/api`;
 };
 
 const api = axios.create({

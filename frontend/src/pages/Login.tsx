@@ -19,6 +19,10 @@ export const Login: React.FC = () => {
       const endpoint = isRegister ? '/register' : '/login';
       const payload = isRegister ? { name, email, password } : { email, password };
       const { data } = await api.post(endpoint, payload);
+      if (!data?.token || !data?.user) {
+        setError('Erro de comunicação com a API (VITE_API_URL incorreta).');
+        return;
+      }
       login(data.token, data.user);
       navigate('/');
     } catch (err: any) {
