@@ -4,7 +4,20 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\HouseController;
 use App\Http\Controllers\TaskController;
+use App\Http\Controllers\AiAssistentController;
 use Illuminate\Support\Facades\Route;
+
+// Webhook externo do Google Apps Script (protegido por Header Secret)
+Route::post('/jarvis/webhook-google', [AiAssistentController::class, 'webhookGoogle']);
+
+// Rotas autenticadas via Sanctum (Token fixo para o script Python e PWA)
+Route::middleware('auth:sanctum')->group(function () {
+    Route::get('/jarvis/state', [AiAssistentController::class, 'state']);
+    Route::post('/jarvis/action', [AiAssistentController::class, 'action']);
+    Route::patch('/tasks/{task}/progress', [TaskController::class, 'toggleProgress']);
+    Route::patch('/tasks/{task}/note', [TaskController::class, 'updateNote']);
+});
+
 
 // Rotas Públicas
 Route::post('/register', [AuthController::class, 'register']);

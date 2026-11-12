@@ -19,6 +19,13 @@ class Task extends Model
         'recurrence',
         'due_date',
         'completed_at',
+        'type',
+        'is_completed',
+        'in_progress_by',
+        'completion_note',
+        'notify_at',
+        'notified',
+        'points',
     ];
 
     protected function casts(): array

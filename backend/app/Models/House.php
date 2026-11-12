@@ -14,6 +14,8 @@ class House extends Model
         'name',
         'description',
         'invite_code',
+        'context_type',
+        'icon',
     ];
 
     protected static function booted(): void
