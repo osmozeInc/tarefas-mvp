@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { BottomMenu } from './components/BottomMenu';
 import { Login } from './pages/Login';
 import { Home } from './pages/Home';
+import { MeuDia } from './pages/MeuDia';
 import { HouseDetail } from './pages/HouseDetail';
 import { HistoryPage, NotificationsPage, ProfilePage } from './pages/SecondaryPages';
 
@@ -26,7 +27,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<PrivateLayout><Home /></PrivateLayout>} />
+          <Route path="/" element={<PrivateLayout><MeuDia /></PrivateLayout>} />
+          <Route path="/spaces" element={<PrivateLayout><Home /></PrivateLayout>} />
           <Route path="/houses/:id" element={<PrivateLayout><HouseDetail /></PrivateLayout>} />
           <Route path="/history" element={<PrivateLayout><HistoryPage /></PrivateLayout>} />
           <Route path="/notifications" element={<PrivateLayout><NotificationsPage /></PrivateLayout>} />

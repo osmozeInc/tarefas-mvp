@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { cache } from '../services/cache';
 import { useNavigate } from 'react-router-dom';
 import { Plus, KeyRound, Users, CheckSquare } from 'lucide-react';
 import api from '../services/api';
@@ -14,7 +15,8 @@ interface House {
 }
 
 export const Home: React.FC = () => {
-  const [houses, setHouses] = useState<House[]>([]);
+  const [houses, setHouses] = useState<House[]>(() => cache.get('houses_list', []));
+  
   const [showCreate, setShowCreate] = useState(false);
   const [showJoin, setShowJoin] = useState(false);
   const [name, setName] = useState('');
@@ -23,9 +25,10 @@ export const Home: React.FC = () => {
   const navigate = useNavigate();
 
   const loadHouses = async () => {
-    const { data } = await api.get('/houses');
-    setHouses(data);
-  };
+  const { data } = await api.get('/houses');
+  setHouses(data);
+  cache.set('houses_list', data);
+};
 
   useEffect(() => {
     loadHouses();
@@ -52,7 +55,7 @@ export const Home: React.FC = () => {
     <div className="space-y-4 p-4 pb-24">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-slate-900">Minhas Residências</h1>
+          <h1 className="text-xl font-bold text-slate-900">Meus Espaços</h1>
           <p className="text-xs text-slate-500">Toque em um card para abrir o ambiente</p>
         </div>
         <div className="flex gap-2">
@@ -121,7 +124,9 @@ export const Home: React.FC = () => {
           >
             <div className="flex items-start justify-between">
               <div>
-                <h3 className="font-semibold text-slate-900">{house.name}</h3>
+                <h3 className="font-semibold text-slate-900">
+                  {(house as any).icon || '📂'} {house.name}
+                </h3>
                 {house.description && <p className="text-xs text-slate-500">{house.description}</p>}
               </div>
               <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-indigo-600">

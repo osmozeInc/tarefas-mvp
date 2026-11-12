@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { cache } from '../services/cache';
 import {
   ArrowLeft,
   Plus,
@@ -30,10 +31,10 @@ export const HouseDetail: React.FC = () => {
   const [tab, setTab] = useState<'tasks' | 'chat' | 'dashboard'>('tasks');
   const [filter, setFilter] = useState<'all' | 'mine' | 'pending' | 'future' | 'done'>('pending');
   const [search, setSearch] = useState('');
-  const [house, setHouse] = useState<any>(null);
-  const [tasks, setTasks] = useState<any[]>([]);
+  const [house, setHouse] = useState<any>(() => cache.get(`house_${id}`, null));
+  const [tasks, setTasks] = useState<any[]>(() => cache.get(`tasks_${id}`, []));
   const [messages, setMessages] = useState<any[]>([]);
-  const [stats, setStats] = useState<any>(null);
+  const [stats, setStats] = useState<any>(() => cache.get(`stats_${id}`, null));
   const [copied, setCopied] = useState(false);
 
   // Estado do Modal de Tarefa (Criar / Editar)
@@ -59,17 +60,30 @@ export const HouseDetail: React.FC = () => {
   const canInteract = myRole === 'owner' || myRole === 'resident';
   const isOwner = myRole === 'owner';
 
-  const loadData = async () => {
-    const [houseRes, tasksRes, statsRes] = await Promise.all([
+  const loadData = async (force = false) => {
+    // Se o cache deste espaço já está fresco (pré-carregado pelo Meu Dia), não faz requisição repetida!
+    if (!force && cache.isFresh(`house_${id}`, 120000) && cache.isFresh(`tasks_${id}`, 120000)) {
+      return;
+    }
+
+    const [houseRes, tasksRes] = await Promise.all([
       api.get(`/houses/${id}`),
       api.get(`/houses/${id}/tasks`),
-      api.get(`/houses/${id}/dashboard`),
     ]);
+
+    cache.set(`house_${id}`, houseRes.data);
+    cache.set(`tasks_${id}`, tasksRes.data);
+
     setHouse(houseRes.data);
     setHouseName(houseRes.data.name);
     setHouseDesc(houseRes.data.description || '');
     setTasks(tasksRes.data);
-    setStats(statsRes.data);
+  };
+
+  const loadStats = async () => {
+    const { data } = await api.get(`/houses/${id}/dashboard`);
+    cache.set(`stats_${id}`, data);
+    setStats(data);
   };
 
   const loadMessages = async () => {
@@ -78,12 +92,25 @@ export const HouseDetail: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
-    loadMessages();
+    // Atualiza os states imediatamente com o cache pré-aquecido ao trocar de ID
+    const cachedHouse = cache.get<any>(`house_${id}`, null);
+    if (cachedHouse) {
+      setHouse(cachedHouse);
+      setHouseName(cachedHouse.name);
+      setHouseDesc(cachedHouse.description || '');
+    }
+    setTasks(cache.get(`tasks_${id}`, []));
+    setStats(cache.get(`stats_${id}`, null));
+
+    loadData(false);
   }, [id]);
 
   useEffect(() => {
+    if (tab === 'dashboard' && !stats) {
+      loadStats();
+    }
     if (tab !== 'chat') return;
+    loadMessages();
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     const interval = setInterval(loadMessages, 4000);
     return () => clearInterval(interval);
@@ -139,19 +166,19 @@ export const HouseDetail: React.FC = () => {
     }
 
     setShowTaskModal(false);
-    loadData();
+    loadData(true);
   };
 
   const toggleTask = async (taskId: number) => {
     if (!canInteract) return;
     await api.patch(`/houses/${id}/tasks/${taskId}/toggle`);
-    loadData();
+    loadData(true);
   };
 
   const deleteTask = async (taskId: number) => {
     if (!window.confirm('Excluir esta tarefa?')) return;
     await api.delete(`/houses/${id}/tasks/${taskId}`);
-    loadData();
+    loadData(true);
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {

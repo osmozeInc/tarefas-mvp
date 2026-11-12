@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Home, CheckCircle2, Bell, User } from 'lucide-react';
+import { Sun, Layers, CheckCircle2, Bell, User } from 'lucide-react';
 import api from '../services/api';
 
 export const BottomMenu: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const location = useLocation();
 
-useEffect(() => {
+  useEffect(() => {
     const fetchUnread = () => {
       api.get('/notifications')
         .then((res) => {
@@ -21,9 +21,10 @@ useEffect(() => {
     window.addEventListener('notificationsUpdated', fetchUnread);
     return () => window.removeEventListener('notificationsUpdated', fetchUnread);
   }, [location.pathname]);
-  
+
   const navItems = [
-    { to: '/', icon: Home, label: 'Início', badge: 0 },
+    { to: '/', icon: Sun, label: 'Meu Dia', badge: 0 },
+    { to: '/spaces', icon: Layers, label: 'Espaços', badge: 0 },
     { to: '/history', icon: CheckCircle2, label: 'Histórico', badge: 0 },
     { to: '/notifications', icon: Bell, label: 'Alertas', badge: unreadCount },
     { to: '/profile', icon: User, label: 'Perfil', badge: 0 },
