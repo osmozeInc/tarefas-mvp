@@ -2,7 +2,6 @@
 
 namespace App\Models;
 
-use App\Enums\TaskPriority;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -19,7 +18,9 @@ class Task extends Model
         'recurrence',
         'due_date',
         'completed_at',
-        'type',
+        'type', // task, list, note
+        'checklist',
+        'is_numbered',
         'is_completed',
         'in_progress_by',
         'completion_note',
@@ -31,9 +32,13 @@ class Task extends Model
     protected function casts(): array
     {
         return [
-            'priority' => TaskPriority::class,
-            'due_date' => 'datetime',
+            'checklist'    => 'array',
+            'is_numbered'  => 'boolean',
+            'is_completed' => 'boolean',
+            'notified'     => 'boolean',
+            'due_date'     => 'datetime',
             'completed_at' => 'datetime',
+            'notify_at'    => 'datetime',
         ];
     }
 
@@ -50,6 +55,11 @@ class Task extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function doingUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'in_progress_by');
     }
 
     public function mentionedUsers(): BelongsToMany

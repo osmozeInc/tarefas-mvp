@@ -6,7 +6,13 @@ import { Login } from './pages/Login';
 import { Home } from './pages/Home';
 import { MeuDia } from './pages/MeuDia';
 import { HouseDetail } from './pages/HouseDetail';
-import { HistoryPage, NotificationsPage, ProfilePage } from './pages/SecondaryPages';
+import {
+  NotificationsPage,
+  ProfilePage,
+  FriendsPage,
+  SettingsPage,
+  TermsPage,
+} from './pages/SecondaryPages';
 
 const PrivateLayout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, loading } = useAuth();
@@ -30,9 +36,12 @@ export default function App() {
           <Route path="/" element={<PrivateLayout><MeuDia /></PrivateLayout>} />
           <Route path="/spaces" element={<PrivateLayout><Home /></PrivateLayout>} />
           <Route path="/houses/:id" element={<PrivateLayout><HouseDetail /></PrivateLayout>} />
-          <Route path="/history" element={<PrivateLayout><HistoryPage /></PrivateLayout>} />
           <Route path="/notifications" element={<PrivateLayout><NotificationsPage /></PrivateLayout>} />
+          <Route path="/history" element={<Navigate to="/notifications" replace />} />
           <Route path="/profile" element={<PrivateLayout><ProfilePage /></PrivateLayout>} />
+          <Route path="/friends" element={<PrivateLayout><FriendsPage /></PrivateLayout>} />
+          <Route path="/settings" element={<PrivateLayout><SettingsPage /></PrivateLayout>} />
+          <Route path="/terms" element={<PrivateLayout><TermsPage /></PrivateLayout>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

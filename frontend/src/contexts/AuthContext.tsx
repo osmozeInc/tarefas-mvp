@@ -4,11 +4,35 @@ import api from '../services/api';
 export interface User {
   id: number;
   name: string;
+  nickname?: string | null;
   email: string;
+  phone?: string | null;
+  bio?: string | null;
+  status_text?: string | null;
+  avatar?: string | null;
+  theme_color?: string;
+  notifications_enabled?: boolean;
+}
+
+export const THEME_OPTIONS = [
+  { id: 'orange', label: 'Laranja', hex: '#ea580c' },
+  { id: 'emerald', label: 'Esmeralda', hex: '#059669' },
+  { id: 'blue', label: 'Azul', hex: '#2563eb' },
+  { id: 'rose', label: 'Rubi', hex: '#e11d48' },
+  { id: 'amber', label: 'Âmbar', hex: '#d97706' },
+  { id: 'slate', label: 'Grafite', hex: '#334155' },
+];
+
+export function applyThemeColor(color?: string | null) {
+  const theme = color || localStorage.getItem('jarvis_theme') || 'orange';
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('jarvis_theme', theme);
 }
 
 interface AuthContextData {
   user: User | null;
+  setUser: React.Dispatch<React.SetStateAction<User | null>>;
+  isJarvisOwner: boolean;
   loading: boolean;
   login: (token: string, userData: User) => void;
   logout: () => Promise<void>;
@@ -27,6 +51,10 @@ function urlBase64ToUint8Array(base64String: string) {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const isJarvisOwner = Boolean(
+    user && (user.id === 1 || user.email === 'caio@jarvis.local')
+  );
 
   const subscribeToPush = async () => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
@@ -51,16 +79,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    applyThemeColor(localStorage.getItem('jarvis_theme') || 'orange');
+
     const token = localStorage.getItem('pwa_token');
     if (!token) {
       setLoading(false);
       return;
     }
 
-    api.get('/user')
+    api
+      .get('/user')
       .then((res) => {
         setUser(res.data);
-        subscribeToPush();
+        applyThemeColor(res.data.theme_color || 'orange');
+        if (res.data.notifications_enabled !== false) {
+          subscribeToPush();
+        }
       })
       .catch(() => localStorage.removeItem('pwa_token'))
       .finally(() => setLoading(false));
@@ -69,7 +103,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = (token: string, userData: User) => {
     localStorage.setItem('pwa_token', token);
     setUser(userData);
-    subscribeToPush();
+    applyThemeColor(userData.theme_color || 'orange');
+    if (userData.notifications_enabled !== false) {
+      subscribeToPush();
+    }
   };
 
   const logout = async () => {
@@ -82,7 +119,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, subscribeToPush }}>
+    <AuthContext.Provider
+      value={{ user, setUser, isJarvisOwner, loading, login, logout, subscribeToPush }}
+    >
       {children}
     </AuthContext.Provider>
   );

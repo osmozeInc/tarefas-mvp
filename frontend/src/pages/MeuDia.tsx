@@ -1,23 +1,51 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Play, Pause, CheckCircle2, Flame, StickyNote, ListTodo, RefreshCw } from 'lucide-react';
+import {
+  Plus,
+  Play,
+  Pause,
+  CheckCircle2,
+  StickyNote,
+  ListTodo,
+  RefreshCw,
+  Calendar,
+  Receipt,
+  Mail,
+  Volume2,
+  Sparkles,
+  ListChecks,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import api from '../services/api';
 import { cache } from '../services/cache';
+import { useAuth } from '../contexts/AuthContext';
+import { ItemModal } from '../components/ItemModal';
+import { SpaceIcon } from '../components/SpaceIcon';
 
 export const MeuDia: React.FC = () => {
-  // Inicializa IMEDIATAMENTE com o que está no cache (0ms)
+  const { isJarvisOwner } = useAuth();
   const [jarvisState, setJarvisState] = useState<any>(() => cache.get('meu_dia', null));
   const [syncing, setSyncing] = useState(false);
-  const [showQuickModal, setShowQuickModal] = useState(false);
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState<'task' | 'priority' | 'note'>('task');
-  const [selectedHouseId, setSelectedHouseId] = useState<number | ''>(() => {
-    const cached = cache.get<any>('meu_dia', null);
-    return cached?.spaces?.[0]?.id || '';
-  });
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [activeItem, setActiveItem] = useState<any | null>(null);
+
   const [completingTask, setCompletingTask] = useState<any>(null);
   const [completionNote, setCompletionNote] = useState('');
+
   const navigate = useNavigate();
+
+  const speakText = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'pt-BR';
+      utterance.rate = 1.1;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
 
   const loadState = async (showIndicator = true) => {
     if (showIndicator) setSyncing(true);
@@ -27,11 +55,8 @@ export const MeuDia: React.FC = () => {
       setJarvisState(data);
       cache.set('meu_dia', data);
 
-      // PRE-WARMING: Abastece o cache de "Meus Espaços" e de cada "HouseDetail" antes do usuário clicar!
       if (data.spaces?.length > 0) {
         cache.set('houses_list', data.spaces);
-        if (!selectedHouseId) setSelectedHouseId(data.spaces[0].id);
-
         data.spaces.forEach((space: any) => {
           cache.set(`house_${space.id}`, space);
           if (data.all_tasks) {
@@ -40,106 +65,91 @@ export const MeuDia: React.FC = () => {
           }
         });
       }
-    } catch (err) {
-      console.error('Erro ao carregar o estado do Jarvis', err);
+    } catch (err: any) {
+      if (
+        err?.code === 'ERR_CANCELED' ||
+        err?.code === 'ECONNABORTED' ||
+        err?.message === 'Request aborted'
+      ) {
+        return;
+      }
+      console.error('Erro ao carregar o estado do Meu Dia', err);
     } finally {
       setSyncing(false);
     }
   };
 
   useEffect(() => {
-    loadState(false); // Atualiza silenciosamente em segundo plano ao abrir
+    loadState(false);
   }, []);
 
-  // Atualização Otimista: muda na tela em 0ms antes mesmo da API responder
+  // Ordenação comunica a urgência: 1º Prioridade -> 2º Prazo -> 3º Menos membros -> 4º Nome
+  const sortedTasksByPriority = useMemo(() => {
+    const rawTasks = [
+      ...(jarvisState?.priorities || []),
+      ...(jarvisState?.pending_tasks || []),
+    ];
+
+    const uniqueMap = new Map();
+    rawTasks.forEach((t: any) => uniqueMap.set(t.id, t));
+    const list = Array.from(uniqueMap.values());
+
+    const weight: Record<string, number> = { high: 3, medium: 2, low: 1 };
+
+    return list.sort((a: any, b: any) => {
+      const pA = weight[a.priority] || 2;
+      const pB = weight[b.priority] || 2;
+      if (pA !== pB) return pB - pA;
+
+      const dA = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+      const dB = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+      if (dA !== dB) return dA - dB;
+
+      const mA = a.house?.members_count ?? 99;
+      const mB = b.house?.members_count ?? 99;
+      if (mA !== mB) return mA - mB;
+
+      return String(a.title || '').localeCompare(String(b.title || ''), 'pt-BR');
+    });
+  }, [jarvisState]);
+
   const handleAction = async (action: string, taskId: number, note?: string) => {
-    const previousState = jarvisState;
-
-    if (jarvisState) {
-      const allTasks = [
-        ...(jarvisState.in_progress || []),
-        ...(jarvisState.priorities || []),
-        ...(jarvisState.pending_tasks || []),
-        ...(jarvisState.notes || []),
-      ];
-      const target = allTasks.find((t: any) => t.id === taskId);
-
-      const nextState = { ...jarvisState };
-
-      if (action === 'complete') {
-        nextState.in_progress = nextState.in_progress?.filter((t: any) => t.id !== taskId);
-        nextState.priorities = nextState.priorities?.filter((t: any) => t.id !== taskId);
-        nextState.pending_tasks = nextState.pending_tasks?.filter((t: any) => t.id !== taskId);
-        nextState.notes = nextState.notes?.filter((t: any) => t.id !== taskId);
-      } else if (action === 'start_progress' && target) {
-        nextState.in_progress = [{ ...target, in_progress_by: 1 }, ...(nextState.in_progress || []).filter((t: any) => t.id !== taskId)];
-      } else if (action === 'stop_progress') {
-        nextState.in_progress = nextState.in_progress?.filter((t: any) => t.id !== taskId);
-      }
-
-      setJarvisState(nextState);
-      cache.set('meu_dia', nextState);
-    }
-
     setCompletingTask(null);
     setCompletionNote('');
-
     try {
       await api.post('/jarvis/action', {
         action,
         task_id: taskId,
         completion_note: note || undefined,
       });
-      loadState(false);
+      await loadState(false);
     } catch (err) {
-      console.error('Erro ao executar ação, revertendo...', err);
-      setJarvisState(previousState);
+      console.error('Erro ao executar ação', err);
     }
   };
 
-  const handleQuickCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-
-    const cleanTitle = title.trim();
-    const spaceObj = jarvisState?.spaces?.find((s: any) => s.id === Number(selectedHouseId));
-    const tempTask = {
-      id: Date.now(),
-      title: cleanTitle,
-      type,
-      house_id: Number(selectedHouseId),
-      house: spaceObj,
-    };
-
-    // Insere na tela em 0ms
-    if (jarvisState) {
-      const nextState = { ...jarvisState };
-      if (type === 'priority') nextState.priorities = [tempTask, ...(nextState.priorities || [])];
-      else if (type === 'note') nextState.notes = [tempTask, ...(nextState.notes || [])];
-      else nextState.pending_tasks = [tempTask, ...(nextState.pending_tasks || [])];
-
-      setJarvisState(nextState);
-      cache.set('meu_dia', nextState);
-    }
-
-    setTitle('');
-    setShowQuickModal(false);
-
-    try {
-      await api.post('/jarvis/action', {
-        action: 'create',
-        title: cleanTitle,
-        type,
-        house_id: selectedHouseId ? Number(selectedHouseId) : undefined,
-      });
-      loadState(false);
-    } catch (err) {
-      console.error('Erro ao criar item rápido', err);
-      loadState(false);
-    }
+  const handleSaveItem = async (payload: any) => {
+    await api.post('/jarvis/action', payload);
+    await loadState(false);
   };
 
-  // Só mostra tela de carregamento na primeiríssima vez na vida em que não há cache nenhum
+  const handleDeleteItem = async (taskId: number) => {
+    await api.post('/jarvis/action', { action: 'delete', task_id: taskId });
+    setModalOpen(false);
+    setActiveItem(null);
+    await loadState(false);
+  };
+
+  const openCreateModal = () => {
+    setActiveItem(null);
+    setModalOpen(true);
+  };
+
+  const openDetailModal = (item: any) => {
+    setActiveItem(item);
+    setModalOpen(true);
+  };
+
   if (!jarvisState) {
     return (
       <div className="flex h-screen items-center justify-center text-sm text-slate-500">
@@ -148,8 +158,17 @@ export const MeuDia: React.FC = () => {
     );
   }
 
+  const briefing = jarvisState.briefing;
+  const hasBriefingData =
+    isJarvisOwner &&
+    briefing &&
+    (briefing.spoken_summary ||
+      briefing.calendar_events?.length > 0 ||
+      briefing.pending_bills?.length > 0 ||
+      briefing.emails_summary?.length > 0);
+
   return (
-    <div className="mx-auto max-w-md space-y-5 p-4 pb-24">
+    <div className="mx-auto max-w-md space-y-5 p-4 pb-28">
       <header className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -166,15 +185,23 @@ export const MeuDia: React.FC = () => {
             {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
           </p>
         </div>
-        <button
-          onClick={() => setShowQuickModal(true)}
-          className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm active:scale-95"
-        >
-          <Plus className="h-4 w-4" /> Adicionar
-        </button>
+
+        {isJarvisOwner && (
+          <button
+            type="button"
+            onClick={() =>
+              briefing?.spoken_summary
+                ? speakText(briefing.spoken_summary)
+                : alert('Jarvis: Aguardando configuração final do assistente.')
+            }
+            className="flex items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 py-2 text-xs font-semibold text-white shadow-sm active:scale-95"
+          >
+            <Sparkles className="h-4 w-4 text-indigo-400" /> Jarvis
+          </button>
+        )}
       </header>
 
-      {/* ATALHOS DOS ESPAÇOS */}
+      {/* ATALHOS DOS ESPAÇOS (COM ÍCONES MONOCROMÁTICOS) */}
       {jarvisState?.spaces?.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {jarvisState.spaces.map((space: any) => (
@@ -183,14 +210,123 @@ export const MeuDia: React.FC = () => {
               onClick={() => navigate(`/houses/${space.id}`)}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition active:scale-95"
             >
-              <span>{space.icon || '📂'}</span>
+              <SpaceIcon icon={space.icon} className="h-3.5 w-3.5 text-slate-600" />
               <span>{space.name}</span>
             </button>
           ))}
         </div>
       )}
 
-      {/* EM ANDAMENTO */}
+      {/* BRIEFING MATINAL DO JARVIS (SEMPRE VISÍVEL PARA O DONO, MESMO VAZIO) */}
+      {isJarvisOwner && (
+        <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-950 text-white shadow-md">
+          <div
+            onClick={() => setBriefingExpanded(!briefingExpanded)}
+            className="flex cursor-pointer items-center justify-between p-4 select-none"
+          >
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-indigo-400" />
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-indigo-200">
+                  Briefing do Jarvis
+                </p>
+                {!briefingExpanded && (
+                  <p className="text-[11px] text-slate-400">
+                    {hasBriefingData
+                      ? 'Toque para expandir agenda, faturas e resumo'
+                      : 'Nenhum resumo sincronizado hoje • Toque para ver'}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {briefing?.spoken_summary && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    speakText(briefing.spoken_summary);
+                  }}
+                  className="flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-medium text-indigo-100 hover:bg-white/20"
+                >
+                  <Volume2 className="h-3.5 w-3.5" /> Ouvir
+                </button>
+              )}
+              {briefingExpanded ? (
+                <ChevronUp className="h-4 w-4 text-slate-300" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-slate-300" />
+              )}
+            </div>
+          </div>
+
+          {briefingExpanded && (
+            <div className="space-y-3 border-t border-white/10 px-4 pb-4 pt-3">
+              {!hasBriefingData ? (
+                <p className="text-xs text-slate-400">
+                  O Jarvis ainda não enviou o briefing matinal de hoje para a sua conta. (ID #{jarvisState?.spaces?.[0]?.pivot?.user_id || 1}).
+                </p>
+              ) : (
+                <>
+                  {briefing.spoken_summary && (
+                    <p className="text-xs leading-relaxed text-slate-200">
+                      {briefing.spoken_summary}
+                    </p>
+                  )}
+
+                  {briefing.calendar_events?.length > 0 && (
+                    <div className="space-y-1.5 border-t border-white/10 pt-2.5">
+                      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-indigo-300">
+                        <Calendar className="h-3.5 w-3.5" /> Agenda de Hoje
+                      </p>
+                      {briefing.calendar_events.map((ev: any, idx: number) => (
+                        <div key={idx} className="flex items-center justify-between text-xs text-slate-100">
+                          <span>• {typeof ev === 'string' ? ev : ev.title}</span>
+                          {ev.time && (
+                            <span className="font-mono text-[11px] text-indigo-200">{ev.time}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {briefing.pending_bills?.length > 0 && (
+                    <div className="space-y-1.5 border-t border-white/10 pt-2.5">
+                      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-300">
+                        <Receipt className="h-3.5 w-3.5" /> Faturas & Boletos
+                      </p>
+                      {briefing.pending_bills.map((bill: any, idx: number) => (
+                        <div key={idx} className="flex items-center justify-between text-xs text-amber-100">
+                          <span>• {typeof bill === 'string' ? bill : bill.title}</span>
+                          {bill.amount && (
+                            <span className="font-semibold text-amber-300">{bill.amount}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {briefing.emails_summary?.length > 0 && (
+                    <div className="space-y-1.5 border-t border-white/10 pt-2.5">
+                      <p className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300">
+                        <Mail className="h-3.5 w-3.5" /> Destaques do Gmail
+                      </p>
+                      {briefing.emails_summary.map((mail: any, idx: number) => (
+                        <p key={idx} className="truncate text-xs text-slate-200">
+                          • {typeof mail === 'string' ? mail : mail.subject}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* EM FOCO AGORA */}
       {jarvisState?.in_progress?.length > 0 && (
         <section className="space-y-2">
           <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-600">
@@ -198,18 +334,20 @@ export const MeuDia: React.FC = () => {
             Em Foco Agora
           </h2>
           {jarvisState.in_progress.map((task: any) => (
-            <div key={task.id} className="rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-3.5 shadow-sm">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-start gap-2.5">
-                  <span className="text-lg">{task.house?.icon || '⚡'}</span>
-                  <div>
-                    <p className="text-sm font-bold text-amber-950">{task.title}</p>
-                    <p className="text-[11px] font-medium text-amber-700">
-                      {task.house?.name} • Fazendo: {task.doing_user?.name || 'Você'}
-                    </p>
+            <div
+              key={task.id}
+              onClick={() => openDetailModal(task)}
+              className="cursor-pointer rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-3.5 shadow-sm transition active:scale-[0.99]"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <SpaceIcon icon={task.house?.icon} className="h-4 w-4 shrink-0 text-amber-800" />
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-bold text-amber-950">{task.title}</p>
+                    <p className="text-[11px] font-medium text-amber-700">{task.house?.name}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={() => handleAction('stop_progress', task.id)}
                     className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100"
@@ -230,33 +368,45 @@ export const MeuDia: React.FC = () => {
         </section>
       )}
 
-      {/* PRIORIDADES */}
-      {jarvisState?.priorities?.length > 0 && (
+      {/* TAREFAS POR PRIORIDADE (Sem bolinha e sem emoji; urgência definida pela ordem) */}
+      {sortedTasksByPriority.length > 0 && (
         <section className="space-y-2">
-          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-red-500">
-            <Flame className="h-3.5 w-3.5" /> Prioridades
+          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
+            <ListTodo className="h-3.5 w-3.5" /> Tarefas por Prioridade
           </h2>
-          {jarvisState.priorities.map((task: any) => (
-            <div key={task.id} className="flex items-center justify-between rounded-2xl border border-red-100 bg-white p-3.5 shadow-2xs">
-              <div className="flex items-center gap-2.5">
-                <span className="text-base">{task.house?.icon || '🔥'}</span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">{task.title}</p>
-                  <p className="text-[11px] text-slate-400">{task.house?.name}</p>
-                </div>
+          {sortedTasksByPriority.map((task: any) => (
+            <div
+              key={task.id}
+              onClick={() => openDetailModal(task)}
+              className="flex cursor-pointer items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs transition active:scale-[0.99]"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-slate-800">{task.title}</p>
+                <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
+                  <SpaceIcon icon={task.house?.icon} className="h-3 w-3 shrink-0" />
+                  <span>{task.house?.name}</span>
+                  {task.due_date
+                    ? ` • ${new Date(task.due_date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
+                    : ''}
+                </p>
               </div>
-              <div className="flex items-center gap-1.5">
+
+              <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                 <button
+                  type="button"
                   onClick={() => handleAction('start_progress', task.id)}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  title="Focar nesta tarefa"
                 >
                   <Play className="h-3 w-3" /> Focar
                 </button>
                 <button
+                  type="button"
                   onClick={() => setCompletingTask(task)}
-                  className="rounded-lg bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100"
+                  className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                  title="Concluir tarefa"
                 >
-                  Feito
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Concluir
                 </button>
               </div>
             </div>
@@ -264,158 +414,97 @@ export const MeuDia: React.FC = () => {
         </section>
       )}
 
-      {/* TAREFAS PENDENTES */}
-      {jarvisState?.pending_tasks?.length > 0 && (
+      {/* SEÇÃO: LISTAS (Metade da tela: grid-cols-2) */}
+      {jarvisState?.lists?.length > 0 && (
         <section className="space-y-2">
-          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
-            <ListTodo className="h-3.5 w-3.5" /> Tarefas do Dia
-          </h2>
-          {jarvisState.pending_tasks.map((task: any) => (
-            <div key={task.id} className="flex items-center justify-between rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs">
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setCompletingTask(task)}
-                  className="text-slate-300 hover:text-indigo-600"
-                >
-                  <CheckCircle2 className="h-5 w-5" />
-                </button>
-                <div>
-                  <p className="text-sm font-medium text-slate-800">{task.title}</p>
-                  <p className="text-[11px] text-slate-400">{task.house?.name}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={() => handleAction('start_progress', task.id)}
-                  className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50"
-                  title="Colocar em andamento"
-                >
-                  <Play className="h-3.5 w-3.5" />
-                </button>
-                <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs">
-                  {task.house?.icon || '📋'}
-                </span>
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* MURAL DE NOTAS RÁPIDAS */}
-      {jarvisState?.notes?.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-400">
-            <StickyNote className="h-3.5 w-3.5" /> Mural de Notas
+          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
+            <ListChecks className="h-3.5 w-3.5" /> Listas
           </h2>
           <div className="grid grid-cols-2 gap-2.5">
-            {jarvisState.notes.map((note: any) => (
-              <div key={note.id} className="flex flex-col justify-between rounded-2xl border border-yellow-200 bg-yellow-50/90 p-3 shadow-2xs">
-                <p className="text-xs leading-relaxed text-slate-800 whitespace-pre-wrap">{note.title}</p>
-                <div className="mt-3 flex items-center justify-between border-t border-yellow-200/60 pt-2">
-                  <span className="text-[11px] font-medium text-yellow-800">
-                    {note.house?.icon} {note.house?.name}
-                  </span>
-                  <button
-                    onClick={() => handleAction('complete', note.id)}
-                    className="text-[10px] font-semibold text-slate-400 hover:text-slate-700"
-                  >
-                    Arquivar
-                  </button>
-                </div>
+            {jarvisState.lists.map((listItem: any) => (
+              <div
+                key={listItem.id}
+                onClick={() => openDetailModal(listItem)}
+                className="cursor-pointer rounded-2xl border border-indigo-100 bg-white p-3.5 shadow-2xs transition active:scale-[0.99]"
+              >
+                <p className="truncate text-sm font-semibold text-slate-800">{listItem.title}</p>
+                <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
+                  <SpaceIcon icon={listItem.house?.icon} className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{listItem.house?.name}</span>
+                </p>
               </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* ESTADO VAZIO */}
-      {!jarvisState?.in_progress?.length &&
-        !jarvisState?.priorities?.length &&
-        !jarvisState?.pending_tasks?.length &&
+      {/* SEÇÃO: NOTAS (Metade da tela: grid-cols-2) */}
+      {jarvisState?.notes?.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
+            <StickyNote className="h-3.5 w-3.5" /> Notas
+          </h2>
+          <div className="grid grid-cols-2 gap-2.5">
+            {jarvisState.notes.map((note: any) => (
+              <div
+                key={note.id}
+                onClick={() => openDetailModal(note)}
+                className="cursor-pointer rounded-2xl border border-yellow-200 bg-yellow-50/90 p-3.5 shadow-2xs transition active:scale-[0.99]"
+              >
+                <p className="truncate text-sm font-semibold text-slate-800">{note.title}</p>
+                <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-yellow-800">
+                  <SpaceIcon icon={note.house?.icon} className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{note.house?.name}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!hasBriefingData &&
+        !jarvisState?.in_progress?.length &&
+        sortedTasksByPriority.length === 0 &&
+        !jarvisState?.lists?.length &&
         !jarvisState?.notes?.length && (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-8 text-center">
             <p className="text-sm font-semibold text-slate-700">Tudo limpo no seu dia!</p>
             <p className="mt-1 text-xs text-slate-400">
-              Use o botão "+ Adicionar" no topo para registrar tarefas, prioridades ou notas.
+              Toque no botão + abaixo para criar tarefas, listas ou notas.
             </p>
           </div>
         )}
 
-      {/* MODAL DE CRIAÇÃO RÁPIDA */}
-      {showQuickModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 p-3 backdrop-blur-xs">
-          <form onSubmit={handleQuickCreate} className="w-full max-w-md space-y-3 rounded-3xl bg-white p-5 shadow-xl">
-            <h3 className="text-base font-bold text-slate-900">Adicionar ao Jarvis Hub</h3>
+      <button
+        type="button"
+        onClick={openCreateModal}
+        title="Adicionar Tarefa, Lista ou Nota"
+        className="fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 transition active:scale-95"
+      >
+        <Plus className="h-6 w-6" />
+      </button>
 
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { id: 'task', label: '📋 Tarefa' },
-                { id: 'priority', label: '🔥 Prioridade' },
-                { id: 'note', label: '📌 Nota' },
-              ].map((item) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  onClick={() => setType(item.id as any)}
-                  className={`rounded-xl py-2 text-xs font-semibold border transition ${
-                    type === item.id
-                      ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
-                      : 'border-slate-200 bg-white text-slate-600'
-                  }`}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+      <ItemModal
+        isOpen={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setActiveItem(null);
+        }}
+        onSave={handleSaveItem}
+        onDelete={handleDeleteItem}
+        initialItem={activeItem}
+        spaces={jarvisState?.spaces || []}
+      />
 
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-slate-500">Espaço / Contexto</label>
-              <select
-                value={selectedHouseId}
-                onChange={(e) => setSelectedHouseId(Number(e.target.value))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium"
-              >
-                {jarvisState?.spaces?.map((s: any) => (
-                  <option key={s.id} value={s.id}>
-                    {s.icon} {s.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <textarea
-              rows={3}
-              required
-              placeholder={type === 'note' ? 'Digite sua anotação rápida...' : 'O que precisa ser feito?'}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 p-3 text-sm focus:border-indigo-600 focus:outline-none"
-              autoFocus
-            />
-
-            <div className="flex gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setShowQuickModal(false)}
-                className="flex-1 rounded-xl bg-slate-100 py-2.5 text-xs font-semibold text-slate-600"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-semibold text-white"
-              >
-                Salvar
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {/* MODAL DE CONCLUSÃO COM NOTA OPCIONAL */}
       {completingTask && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-sm space-y-3 rounded-3xl bg-white p-5 shadow-xl">
+        <div
+          onClick={() => setCompletingTask(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm space-y-3 rounded-3xl bg-white p-5 shadow-xl"
+          >
             <h3 className="text-sm font-bold text-slate-900">Concluir: {completingTask.title}</h3>
             <textarea
               rows={3}
