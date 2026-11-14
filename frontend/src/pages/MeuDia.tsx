@@ -479,7 +479,7 @@ export const MeuDia: React.FC = () => {
         type="button"
         onClick={openCreateModal}
         title="Adicionar Tarefa, Lista ou Nota"
-        className="fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 transition active:scale-95"
+        className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom)*0.55)] right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 transition active:scale-95"
       >
         <Plus className="h-6 w-6" />
       </button>

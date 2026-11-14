@@ -6,15 +6,22 @@
 }
 
 html,
-body,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100dvh;
+  background-color: #ffffff;
+  color: #0f172a;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
 #root {
   margin: 0;
   padding: 0;
   width: 100%;
   min-height: 100dvh;
   background-color: #f1f5f9;
-  color: #0f172a;
-  font-family: system-ui, -apple-system, sans-serif;
   display: flex;
   flex-direction: column;
   justify-content: flex-start;

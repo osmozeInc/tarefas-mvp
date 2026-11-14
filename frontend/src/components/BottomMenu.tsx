@@ -51,7 +51,7 @@ export const BottomMenu: React.FC = () => {
         />
       )}
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 mx-auto max-w-md border-t border-slate-200 bg-white/95 pb-[max(0.25rem,calc(env(safe-area-inset-bottom)*0.55))] backdrop-blur-md">
         {/* Menu Flutuante (Select/Popover) do Social */}
         {socialOpen && (
           <div className="absolute bottom-[calc(100%+0.5rem)] right-3 w-48 overflow-hidden rounded-2xl border border-slate-200/90 bg-white p-1.5 shadow-xl">
@@ -82,7 +82,7 @@ export const BottomMenu: React.FC = () => {
           </div>
         )}
 
-        <div className="flex h-16 items-center justify-around px-2">
+        <div className="flex h-14 items-center justify-around px-2">
           {navItems.map(({ to, icon: Icon, label, badge }) => (
             <NavLink
               key={to}
