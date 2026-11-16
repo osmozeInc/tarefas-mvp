@@ -27,7 +27,7 @@ export const BottomMenu: React.FC = () => {
   }, [location.pathname]);
 
   const navItems = [
-    { to: '/', icon: Sun, label: 'Meu Dia', badge: 0 },
+    { to: '/', icon: Sun, label: 'Meu Painel', badge: 0 },
     { to: '/spaces', icon: Layers, label: 'Espaços', badge: 0 },
     { to: '/notifications', icon: Bell, label: 'Alertas', badge: unreadCount },
   ];

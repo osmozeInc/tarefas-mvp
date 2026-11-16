@@ -5,7 +5,6 @@ import {
   Play,
   Pause,
   CheckCircle2,
-  StickyNote,
   ListTodo,
   RefreshCw,
   Calendar,
@@ -73,7 +72,7 @@ export const MeuDia: React.FC = () => {
       ) {
         return;
       }
-      console.error('Erro ao carregar o estado do Meu Dia', err);
+      console.error('Erro ao carregar o estado do Meu Painel', err);
     } finally {
       setSyncing(false);
     }
@@ -111,6 +110,13 @@ export const MeuDia: React.FC = () => {
 
       return String(a.title || '').localeCompare(String(b.title || ''), 'pt-BR');
     });
+  }, [jarvisState]);
+
+  const listsAndNotes = useMemo(() => {
+    return [
+      ...(jarvisState?.lists || []),
+      ...(jarvisState?.notes || []),
+    ];
   }, [jarvisState]);
 
   const handleAction = async (action: string, taskId: number, note?: string) => {
@@ -172,7 +178,7 @@ export const MeuDia: React.FC = () => {
       <header className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-2xl font-bold text-slate-900">Meu Dia</h1>
+            <h1 className="text-2xl font-bold text-slate-900">Meu Painel</h1>
             <button
               onClick={() => loadState(true)}
               className="rounded-lg p-1 text-slate-400 hover:bg-slate-200/60 hover:text-slate-700"
@@ -201,7 +207,7 @@ export const MeuDia: React.FC = () => {
         )}
       </header>
 
-      {/* ATALHOS DOS ESPAÇOS (COM ÍCONES MONOCROMÁTICOS) */}
+      {/* ATALHOS DOS ESPAÇOS */}
       {jarvisState?.spaces?.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {jarvisState.spaces.map((space: any) => (
@@ -210,14 +216,14 @@ export const MeuDia: React.FC = () => {
               onClick={() => navigate(`/houses/${space.id}`)}
               className="flex shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-2xs transition active:scale-95"
             >
-              <SpaceIcon icon={space.icon} className="h-3.5 w-3.5 text-slate-600" />
+              <SpaceIcon icon={space.icon} className="h-3.5 w-3.5 text-indigo-600" />
               <span>{space.name}</span>
             </button>
           ))}
         </div>
       )}
 
-      {/* BRIEFING MATINAL DO JARVIS (SEMPRE VISÍVEL PARA O DONO, MESMO VAZIO) */}
+      {/* BRIEFING MATINAL DO JARVIS */}
       {isJarvisOwner && (
         <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 to-indigo-950 text-white shadow-md">
           <div
@@ -368,7 +374,7 @@ export const MeuDia: React.FC = () => {
         </section>
       )}
 
-      {/* TAREFAS POR PRIORIDADE (Sem bolinha e sem emoji; urgência definida pela ordem) */}
+      {/* TAREFAS POR PRIORIDADE (Sem data no card e com espaço na cor do ambiente) */}
       {sortedTasksByPriority.length > 0 && (
         <section className="space-y-2">
           <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
@@ -382,12 +388,9 @@ export const MeuDia: React.FC = () => {
             >
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-800">{task.title}</p>
-                <p className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-400">
+                <p className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
                   <SpaceIcon icon={task.house?.icon} className="h-3 w-3 shrink-0" />
-                  <span>{task.house?.name}</span>
-                  {task.due_date
-                    ? ` • ${new Date(task.due_date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
-                    : ''}
+                  <span className="truncate">{task.house?.name}</span>
                 </p>
               </div>
 
@@ -414,50 +417,33 @@ export const MeuDia: React.FC = () => {
         </section>
       )}
 
-      {/* SEÇÃO: LISTAS (Metade da tela: grid-cols-2) */}
-      {jarvisState?.lists?.length > 0 && (
+      {/* SEÇÃO UNIFICADA: LISTAS E ANOTAÇÕES */}
+      {listsAndNotes.length > 0 && (
         <section className="space-y-2">
           <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-            <ListChecks className="h-3.5 w-3.5" /> Listas
+            <ListChecks className="h-3.5 w-3.5" /> Listas e Anotações
           </h2>
           <div className="grid grid-cols-2 gap-2.5">
-            {jarvisState.lists.map((listItem: any) => (
-              <div
-                key={listItem.id}
-                onClick={() => openDetailModal(listItem)}
-                className="cursor-pointer rounded-2xl border border-indigo-100 bg-white p-3.5 shadow-2xs transition active:scale-[0.99]"
-              >
-                <p className="truncate text-sm font-semibold text-slate-800">{listItem.title}</p>
-                <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
-                  <SpaceIcon icon={listItem.house?.icon} className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{listItem.house?.name}</span>
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* SEÇÃO: NOTAS (Metade da tela: grid-cols-2) */}
-      {jarvisState?.notes?.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-            <StickyNote className="h-3.5 w-3.5" /> Notas
-          </h2>
-          <div className="grid grid-cols-2 gap-2.5">
-            {jarvisState.notes.map((note: any) => (
-              <div
-                key={note.id}
-                onClick={() => openDetailModal(note)}
-                className="cursor-pointer rounded-2xl border border-yellow-200 bg-yellow-50/90 p-3.5 shadow-2xs transition active:scale-[0.99]"
-              >
-                <p className="truncate text-sm font-semibold text-slate-800">{note.title}</p>
-                <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-yellow-800">
-                  <SpaceIcon icon={note.house?.icon} className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{note.house?.name}</span>
-                </p>
-              </div>
-            ))}
+            {listsAndNotes.map((item: any) => {
+              const isNote = item.type === 'note';
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => openDetailModal(item)}
+                  className={`cursor-pointer rounded-2xl border p-3.5 shadow-2xs transition active:scale-[0.99] ${
+                    isNote
+                      ? 'border-yellow-200 bg-yellow-50/90'
+                      : 'border-indigo-100 bg-white'
+                  }`}
+                >
+                  <p className="truncate text-sm font-semibold text-slate-800">{item.title}</p>
+                  <p className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
+                    <SpaceIcon icon={item.house?.icon} className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{item.house?.name}</span>
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -465,10 +451,9 @@ export const MeuDia: React.FC = () => {
       {!hasBriefingData &&
         !jarvisState?.in_progress?.length &&
         sortedTasksByPriority.length === 0 &&
-        !jarvisState?.lists?.length &&
-        !jarvisState?.notes?.length && (
+        listsAndNotes.length === 0 && (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-8 text-center">
-            <p className="text-sm font-semibold text-slate-700">Tudo limpo no seu dia!</p>
+            <p className="text-sm font-semibold text-slate-700">Tudo limpo no seu painel!</p>
             <p className="mt-1 text-xs text-slate-400">
               Toque no botão + abaixo para criar tarefas, listas ou notas.
             </p>
