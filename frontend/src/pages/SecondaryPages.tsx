@@ -213,12 +213,27 @@ export const NotificationsPage: React.FC = () => {
                   <div>
                     <p className="text-sm font-semibold text-slate-800">{t.title}</p>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      {t.house?.name} {t.assignee ? `• Feito por ${t.assignee.name}` : ''}
+                      {t.house?.name}
+                      {t.completer
+                        ? ` • Concluída por ${t.completer.nickname || t.completer.name}`
+                        : ''}
                     </p>
                   </div>
-                  <span className="shrink-0 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
-                    {new Date(t.completed_at).toLocaleDateString('pt-BR')}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <span className="rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                      {new Date(t.completed_at).toLocaleDateString('pt-BR')}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await api.post('/jarvis/action', { action: 'uncomplete', task_id: t.id });
+                        loadHistory();
+                      }}
+                      className="rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-700 hover:bg-amber-100"
+                    >
+                      Reabrir
+                    </button>
+                  </div>
                 </div>
                 {t.completion_note && (
                   <p className="mt-2 rounded-xl bg-slate-50 p-2.5 text-xs text-slate-600">

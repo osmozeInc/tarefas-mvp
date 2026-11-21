@@ -43,7 +43,9 @@ class User extends Authenticatable
     public function houses(): BelongsToMany
     {
         return $this->belongsToMany(House::class)
-            ->withPivot('role')
+            ->withPivot(['role', 'position'])
+            ->orderByPivot('position')
+            ->orderBy('houses.id')
             ->withTimestamps();
     }
 

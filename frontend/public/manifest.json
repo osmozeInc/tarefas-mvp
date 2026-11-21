@@ -1,6 +1,6 @@
 {
-  "short_name": "Jarvis Hub",
-  "name": "Jarvis Hub",
+  "short_name": "ColabTask",
+  "name": "ColabTask - Gestão inteligente de espaços, tarefas e rotina",
   "description": "Gestão inteligente de espaços, tarefas e rotina",
   "start_url": "/",
   "display": "standalone",

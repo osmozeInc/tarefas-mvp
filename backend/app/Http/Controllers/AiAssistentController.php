@@ -71,7 +71,7 @@ class AiAssistentController extends Controller
     public function action(Request $request)
     {
         $validated = $request->validate([
-            'action'             => 'required|in:create,update,complete,start_progress,stop_progress,mark_notified,delete,create_space,update_space,join_space',
+            'action'             => 'required|in:create,update,complete,uncomplete,start_progress,stop_progress,mark_notified,delete,create_space,update_space,join_space,reorder_spaces',
             'task_id'            => 'nullable|integer|exists:tasks,id',
             'house_id'           => 'nullable|integer|exists:houses,id',
             'context_type'       => 'nullable|string',
@@ -82,6 +82,8 @@ class AiAssistentController extends Controller
             'recurrence'         => 'nullable|string|max:100',
             'due_date'           => 'nullable|date',
             'assigned_to'        => 'nullable|integer|exists:users,id',
+            'assigned_to_ids'    => 'nullable|array',
+            'assigned_to_ids.*'  => 'integer|exists:users,id',
             'checklist'          => 'nullable|array',
             'is_numbered'        => 'nullable|boolean',
             'mentioned_user_ids' => 'nullable|array',
@@ -91,13 +93,27 @@ class AiAssistentController extends Controller
             'name'               => 'nullable|string|max:255',
             'icon'               => 'nullable|string|max:32',
             'member_ids'         => 'nullable|array',
+            'space_ids'          => 'nullable|array',
             'invite_code'        => 'nullable|string|max:20',
             'notify_entry'       => 'nullable|boolean',
         ]);
 
         $user = $request->user();
 
-        // ATUALIZAR ESPAÇO EXISTENTE (Envia convite para novos membros; remove desmarcados)
+        // REORDENAR ESPAÇOS DO USUÁRIO (Drag & Drop)
+        if ($validated['action'] === 'reorder_spaces') {
+            $spaceIds = $validated['space_ids'] ?? [];
+            foreach ($spaceIds as $index => $spaceId) {
+                DB::table('house_user')
+                    ->where('user_id', $user->id)
+                    ->where('house_id', (int) $spaceId)
+                    ->update(['position' => $index]);
+            }
+
+            return response()->json(['status' => 'spaces_reordered']);
+        }
+
+        // ATUALIZAR ESPAÇO EXISTENTE
         if ($validated['action'] === 'update_space') {
             $house = House::with('members:id')->findOrFail($validated['house_id']);
             $house->name = $validated['name'] ?? $house->name;
@@ -111,14 +127,12 @@ class AiAssistentController extends Controller
                 $currentMemberIds = $house->members->pluck('id')->map(fn($id) => (int) $id)->toArray();
                 $desiredIds = array_unique(array_map('intval', $validated['member_ids']));
 
-                // Mantém quem já era membro e continuou selecionado
                 $keepSync = [$user->id => ['role' => 'owner']];
                 foreach ($desiredIds as $mId) {
                     if ($mId === (int) $user->id) continue;
                     if (in_array($mId, $currentMemberIds, true)) {
                         $keepSync[$mId] = ['role' => 'resident'];
                     } else {
-                        // Se não era membro ainda, envia solicitação pendente
                         DB::table('space_invitations')->updateOrInsert(
                             ['house_id' => $house->id, 'invitee_id' => $mId],
                             ['inviter_id' => $user->id, 'status' => 'pending', 'created_at' => now(), 'updated_at' => now()]
@@ -140,8 +154,10 @@ class AiAssistentController extends Controller
             ]);
         }
 
-        // CRIAR NOVO ESPAÇO (Com Ícone e Solicitação para Membros)
+        // CRIAR NOVO ESPAÇO
         if ($validated['action'] === 'create_space') {
+            $nextPos = ((int) DB::table('house_user')->where('user_id', $user->id)->max('position')) + 1;
+
             $house = new House();
             $house->name = $validated['name'];
             $house->description = $validated['description'] ?? null;
@@ -149,7 +165,7 @@ class AiAssistentController extends Controller
             $house->invite_code = strtoupper(Str::random(8));
             $house->save();
 
-            $house->members()->attach($user->id, ['role' => 'owner']);
+            $house->members()->attach($user->id, ['role' => 'owner', 'position' => $nextPos]);
 
             if (!empty($validated['member_ids'])) {
                 $friendIds = array_unique(array_diff($validated['member_ids'], [$user->id]));
@@ -181,7 +197,8 @@ class AiAssistentController extends Controller
             }
 
             if (!$house->members->contains('id', $user->id)) {
-                $house->members()->attach($user->id, ['role' => 'resident']);
+                $nextPos = ((int) DB::table('house_user')->where('user_id', $user->id)->max('position')) + 1;
+                $house->members()->attach($user->id, ['role' => 'resident', 'position' => $nextPos]);
 
                 if (!empty($validated['notify_entry'])) {
                     foreach ($house->members as $member) {
@@ -199,15 +216,23 @@ class AiAssistentController extends Controller
             return response()->json(['status' => 'space_joined', 'house' => $house]);
         }
 
+        // CRIAR ITEM (TAREFA / LISTA / NOTA) COM MÚLTIPLOS RESPONSÁVEIS
         if ($validated['action'] === 'create') {
             $houseId = $validated['house_id'] ?? $user->houses()
                 ->when($validated['context_type'] ?? null, fn($q, $ctx) => $q->where('context_type', $ctx))
                 ->value('houses.id');
 
+            $assigneeIds = [];
+            if (array_key_exists('assigned_to_ids', $validated)) {
+                $assigneeIds = array_values(array_unique(array_map('intval', $validated['assigned_to_ids'] ?? [])));
+            } elseif (!empty($validated['assigned_to'])) {
+                $assigneeIds = [(int) $validated['assigned_to']];
+            }
+
             $task = Task::create([
                 'house_id'    => $houseId,
                 'created_by'  => $user->id,
-                'assigned_to' => array_key_exists('assigned_to', $validated) ? $validated['assigned_to'] : null,
+                'assigned_to' => $assigneeIds[0] ?? null,
                 'title'       => $validated['title'],
                 'description' => $validated['description'] ?? null,
                 'type'        => $validated['type'] ?? 'task',
@@ -219,10 +244,13 @@ class AiAssistentController extends Controller
                 'notify_at'   => $validated['notify_at'] ?? null,
             ]);
 
+            if (!empty($assigneeIds)) {
+                $task->assignees()->sync($assigneeIds);
+            }
+
             $houseName = House::where('id', $houseId)->value('name') ?? 'Espaço';
             $notifiedUsers = [];
 
-            // Notifica os usuários mencionados (@)
             if (!empty($validated['mentioned_user_ids']) && method_exists($task, 'mentionedUsers')) {
                 $task->mentionedUsers()->sync($validated['mentioned_user_ids']);
                 foreach ($validated['mentioned_user_ids'] as $mentionedId) {
@@ -237,14 +265,15 @@ class AiAssistentController extends Controller
                 }
             }
 
-            // Notifica o responsável (se for outra pessoa e ainda não tiver sido notificado pela menção)
-            if (!empty($task->assigned_to) && (int) $task->assigned_to !== (int) $user->id && !in_array((int) $task->assigned_to, $notifiedUsers, true)) {
+            foreach ($assigneeIds as $assignedId) {
+                if ($assignedId === (int) $user->id || in_array($assignedId, $notifiedUsers, true)) continue;
                 $this->sendUserNotification(
-                    (int) $task->assigned_to,
+                    $assignedId,
                     $houseName,
                     "{$user->name} atribuiu uma tarefa para você: \"{$task->title}\"",
                     "/houses/{$houseId}"
                 );
+                $notifiedUsers[] = $assignedId;
             }
 
             if (!empty($validated['notify_members'])) {
@@ -253,16 +282,19 @@ class AiAssistentController extends Controller
 
             return response()->json([
                 'status' => 'created',
-                'task'   => $task->load(['house:id,name,context_type,icon', 'assignee:id,name', 'mentionedUsers:id,name']),
+                'task'   => $task->load(['house:id,name,context_type,icon', 'assignee:id,name,nickname', 'assignees:id,name,nickname', 'mentionedUsers:id,name,nickname']),
             ], 201);
         }
 
         $task = Task::findOrFail($validated['task_id']);
 
+        // ATUALIZAR ITEM (BLOQUEADO SE JÁ CONCLUÍDO)
         if ($validated['action'] === 'update') {
-            $previousAssignee = $task->assigned_to;
+            abort_if($task->completed_at !== null, 422, 'Tarefas concluídas não podem ser editadas. Reabra a tarefa primeiro.');
 
-            $task->update([
+            $previousAssigneeIds = $task->assignees()->pluck('users.id')->map(fn($id) => (int) $id)->toArray();
+
+            $updateData = [
                 'house_id'    => $validated['house_id'] ?? $task->house_id,
                 'title'       => $validated['title'] ?? $task->title,
                 'description' => array_key_exists('description', $validated) ? $validated['description'] : $task->description,
@@ -270,10 +302,20 @@ class AiAssistentController extends Controller
                 'priority'    => $validated['priority'] ?? $task->priority,
                 'recurrence'  => $validated['recurrence'] ?? $task->recurrence,
                 'due_date'    => array_key_exists('due_date', $validated) ? $validated['due_date'] : $task->due_date,
-                'assigned_to' => array_key_exists('assigned_to', $validated) ? $validated['assigned_to'] : $task->assigned_to,
                 'checklist'   => array_key_exists('checklist', $validated) ? ($validated['checklist'] ?? []) : $task->checklist,
                 'is_numbered' => array_key_exists('is_numbered', $validated) ? (bool) $validated['is_numbered'] : $task->is_numbered,
-            ]);
+            ];
+
+            $newAssigneeIds = null;
+            if (array_key_exists('assigned_to_ids', $validated)) {
+                $newAssigneeIds = array_values(array_unique(array_map('intval', $validated['assigned_to_ids'] ?? [])));
+                $updateData['assigned_to'] = $newAssigneeIds[0] ?? null;
+            } elseif (array_key_exists('assigned_to', $validated)) {
+                $newAssigneeIds = !empty($validated['assigned_to']) ? [(int) $validated['assigned_to']] : [];
+                $updateData['assigned_to'] = $validated['assigned_to'];
+            }
+
+            $task->update($updateData);
 
             $houseName = House::where('id', $task->house_id)->value('name') ?? 'Espaço';
 
@@ -291,13 +333,18 @@ class AiAssistentController extends Controller
                 }
             }
 
-            if (!empty($task->assigned_to) && (int) $task->assigned_to !== (int) $previousAssignee && (int) $task->assigned_to !== (int) $user->id) {
-                $this->sendUserNotification(
-                    (int) $task->assigned_to,
-                    $houseName,
-                    "{$user->name} atribuiu a tarefa \"{$task->title}\" para você.",
-                    "/houses/{$task->house_id}"
-                );
+            if ($newAssigneeIds !== null) {
+                $task->assignees()->sync($newAssigneeIds);
+                $addedAssignees = array_diff($newAssigneeIds, $previousAssigneeIds);
+                foreach ($addedAssignees as $assignedId) {
+                    if ($assignedId === (int) $user->id) continue;
+                    $this->sendUserNotification(
+                        $assignedId,
+                        $houseName,
+                        "{$user->name} atribuiu a tarefa \"{$task->title}\" para você.",
+                        "/houses/{$task->house_id}"
+                    );
+                }
             }
 
             if (!empty($validated['notify_members'])) {
@@ -306,7 +353,7 @@ class AiAssistentController extends Controller
 
             return response()->json([
                 'status' => 'updated',
-                'task'   => $task->load(['house:id,name,context_type,icon', 'assignee:id,name', 'mentionedUsers:id,name']),
+                'task'   => $task->load(['house:id,name,context_type,icon', 'assignee:id,name,nickname', 'assignees:id,name,nickname', 'mentionedUsers:id,name,nickname']),
             ]);
         }
 
@@ -315,19 +362,19 @@ class AiAssistentController extends Controller
             return response()->json(['status' => 'deleted']);
         }
 
+        // CONCLUIR TAREFA (Registra quem clicou em completed_by)
         if ($validated['action'] === 'complete') {
             $task->update([
                 'is_completed'    => true,
                 'completed_at'    => now(),
+                'completed_by'    => $user->id,
                 'in_progress_by'  => null,
                 'completion_note' => $validated['completion_note'] ?? $task->completion_note,
             ]);
 
-            // Se a tarefa tiver repetição configurada, agenda automaticamente o próximo ciclo
             if ($task->type === 'task' && !empty($task->recurrence) && $task->recurrence !== 'none') {
                 $nextDueDate = $this->calculateNextDueDate($task->due_date, $task->recurrence);
 
-                // Desmarca as etapas do checklist para o próximo ciclo começar limpo
                 $resetChecklist = collect($task->checklist ?? [])->map(function ($step) {
                     if (is_array($step)) {
                         $step['done'] = false;
@@ -349,6 +396,11 @@ class AiAssistentController extends Controller
                     'is_numbered' => $task->is_numbered,
                 ]);
 
+                $assigneeIds = $task->assignees()->pluck('users.id')->toArray();
+                if (!empty($assigneeIds)) {
+                    $nextTask->assignees()->sync($assigneeIds);
+                }
+
                 if (method_exists($task, 'mentionedUsers')) {
                     $mentionIds = $task->mentionedUsers()->pluck('users.id')->toArray();
                     if (!empty($mentionIds)) {
@@ -356,6 +408,14 @@ class AiAssistentController extends Controller
                     }
                 }
             }
+        } elseif ($validated['action'] === 'uncomplete') {
+            // DESCONCLUIR / REABRIR TAREFA
+            $task->update([
+                'is_completed'    => false,
+                'completed_at'    => null,
+                'completed_by'    => null,
+                'completion_note' => null,
+            ]);
         } elseif ($validated['action'] === 'start_progress') {
             $task->update(['in_progress_by' => $user->id]);
         } elseif ($validated['action'] === 'stop_progress') {
@@ -364,7 +424,7 @@ class AiAssistentController extends Controller
             $task->update(['notified' => true]);
         }
 
-        return response()->json(['status' => 'updated', 'task' => $task]);
+        return response()->json(['status' => 'updated', 'task' => $task->fresh()]);
     }
 
     private function calculateNextDueDate($currentDueDate, string $recurrence): \Carbon\Carbon

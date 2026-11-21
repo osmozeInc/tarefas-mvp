@@ -15,18 +15,21 @@ import {
   ListChecks,
   ChevronDown,
   ChevronUp,
+  Zap,
 } from 'lucide-react';
 import api from '../services/api';
 import { cache } from '../services/cache';
 import { useAuth } from '../contexts/AuthContext';
 import { ItemModal } from '../components/ItemModal';
 import { SpaceIcon } from '../components/SpaceIcon';
+import { MeuPainelSkeleton } from '../components/Skeletons';
 
 export const MeuDia: React.FC = () => {
   const { isJarvisOwner } = useAuth();
   const [jarvisState, setJarvisState] = useState<any>(() => cache.get('meu_dia', null));
   const [syncing, setSyncing] = useState(false);
   const [briefingExpanded, setBriefingExpanded] = useState(false);
+  const [loadingTaskId, setLoadingTaskId] = useState<number | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [activeItem, setActiveItem] = useState<any | null>(null);
@@ -82,20 +85,29 @@ export const MeuDia: React.FC = () => {
     loadState(false);
   }, []);
 
-  // Ordenação comunica a urgência: 1º Prioridade -> 2º Prazo -> 3º Menos membros -> 4º Nome
+  // Ordenação unificada: 1º Em Foco -> 2º Prioridade -> 3º Prazo -> 4º Menos membros -> 5º Nome
   const sortedTasksByPriority = useMemo(() => {
     const rawTasks = [
+      ...(jarvisState?.in_progress || []),
       ...(jarvisState?.priorities || []),
       ...(jarvisState?.pending_tasks || []),
     ];
 
     const uniqueMap = new Map();
-    rawTasks.forEach((t: any) => uniqueMap.set(t.id, t));
+    rawTasks.forEach((t: any) => {
+      if (t.type !== 'list' && t.type !== 'note') {
+        uniqueMap.set(t.id, t);
+      }
+    });
     const list = Array.from(uniqueMap.values());
 
     const weight: Record<string, number> = { high: 3, medium: 2, low: 1 };
 
     return list.sort((a: any, b: any) => {
+      const focusA = a.in_progress_by ? 1 : 0;
+      const focusB = b.in_progress_by ? 1 : 0;
+      if (focusA !== focusB) return focusB - focusA;
+
       const pA = weight[a.priority] || 2;
       const pB = weight[b.priority] || 2;
       if (pA !== pB) return pB - pA;
@@ -122,6 +134,7 @@ export const MeuDia: React.FC = () => {
   const handleAction = async (action: string, taskId: number, note?: string) => {
     setCompletingTask(null);
     setCompletionNote('');
+    setLoadingTaskId(taskId);
     try {
       await api.post('/jarvis/action', {
         action,
@@ -131,6 +144,8 @@ export const MeuDia: React.FC = () => {
       await loadState(false);
     } catch (err) {
       console.error('Erro ao executar ação', err);
+    } finally {
+      setLoadingTaskId(null);
     }
   };
 
@@ -157,11 +172,7 @@ export const MeuDia: React.FC = () => {
   };
 
   if (!jarvisState) {
-    return (
-      <div className="flex h-screen items-center justify-center text-sm text-slate-500">
-        Carregando dados iniciais...
-      </div>
-    );
+    return <MeuPainelSkeleton />;
   }
 
   const briefing = jarvisState.briefing;
@@ -271,7 +282,7 @@ export const MeuDia: React.FC = () => {
             <div className="space-y-3 border-t border-white/10 px-4 pb-4 pt-3">
               {!hasBriefingData ? (
                 <p className="text-xs text-slate-400">
-                  O Jarvis ainda não enviou o briefing matinal de hoje para a sua conta. (ID #{jarvisState?.spaces?.[0]?.pivot?.user_id || 1}).
+                  O Jarvis ainda não enviou o briefing matinal de hoje para a sua conta.
                 </p>
               ) : (
                 <>
@@ -332,88 +343,94 @@ export const MeuDia: React.FC = () => {
         </section>
       )}
 
-      {/* EM FOCO AGORA */}
-      {jarvisState?.in_progress?.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-600">
-            <span className="h-2 w-2 rounded-full bg-amber-500 animate-ping" />
-            Em Foco Agora
-          </h2>
-          {jarvisState.in_progress.map((task: any) => (
-            <div
-              key={task.id}
-              onClick={() => openDetailModal(task)}
-              className="cursor-pointer rounded-2xl border-2 border-amber-300 bg-amber-50/90 p-3.5 shadow-sm transition active:scale-[0.99]"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <SpaceIcon icon={task.house?.icon} className="h-4 w-4 shrink-0 text-amber-800" />
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-amber-950">{task.title}</p>
-                    <p className="text-[11px] font-medium text-amber-700">{task.house?.name}</p>
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                  <button
-                    onClick={() => handleAction('stop_progress', task.id)}
-                    className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100"
-                    title="Pausar"
-                  >
-                    <Pause className="h-4 w-4" />
-                  </button>
-                  <button
-                    onClick={() => setCompletingTask(task)}
-                    className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-amber-700"
-                  >
-                    Concluir
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </section>
-      )}
-
-      {/* TAREFAS POR PRIORIDADE (Sem data no card e com espaço na cor do ambiente) */}
+      {/* TAREFAS POR PRIORIDADE (Com tarefa em foco destacada no topo + borda giratória de loading) */}
       {sortedTasksByPriority.length > 0 && (
         <section className="space-y-2">
           <h2 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
             <ListTodo className="h-3.5 w-3.5" /> Tarefas por Prioridade
           </h2>
-          {sortedTasksByPriority.map((task: any) => (
-            <div
-              key={task.id}
-              onClick={() => openDetailModal(task)}
-              className="flex cursor-pointer items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-white p-3.5 shadow-2xs transition active:scale-[0.99]"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-slate-800">{task.title}</p>
-                <p className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
-                  <SpaceIcon icon={task.house?.icon} className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{task.house?.name}</span>
-                </p>
-              </div>
+          {sortedTasksByPriority.map((task: any) => {
+            const isInProgress = Boolean(task.in_progress_by);
+            const isLoading = loadingTaskId === task.id;
 
-              <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                <button
-                  type="button"
-                  onClick={() => handleAction('start_progress', task.id)}
-                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                  title="Focar nesta tarefa"
+            const cardContent = (
+              <div
+                onClick={() => !isLoading && openDetailModal(task)}
+                className={`flex cursor-pointer items-center justify-between gap-2 p-3.5 transition active:scale-[0.99] ${
+                  isLoading
+                    ? 'card-loading-inner bg-white'
+                    : isInProgress
+                    ? 'rounded-2xl border-2 border-amber-400 bg-amber-50/80 shadow-sm'
+                    : 'rounded-2xl border border-slate-200/80 bg-white shadow-2xs'
+                }`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    {isInProgress && <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
+                    <p
+                      className={`truncate text-sm font-semibold ${
+                        isInProgress ? 'text-amber-950' : 'text-slate-800'
+                      }`}
+                    >
+                      {task.title}
+                    </p>
+                  </div>
+                  <p className="mt-0.5 flex items-center gap-1 text-[11px] font-medium text-indigo-600">
+                    <SpaceIcon icon={task.house?.icon} className="h-3 w-3 shrink-0" />
+                    <span className="truncate">{task.house?.name}</span>
+                  </p>
+                </div>
+
+                <div
+                  className="flex shrink-0 items-center gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <Play className="h-3 w-3" /> Focar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCompletingTask(task)}
-                  className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                  title="Concluir tarefa"
-                >
-                  <CheckCircle2 className="h-3.5 w-3.5" /> Concluir
-                </button>
+                  {isInProgress ? (
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={() => handleAction('stop_progress', task.id)}
+                      className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100 disabled:opacity-40"
+                      title="Pausar foco"
+                    >
+                      <Pause className="h-3.5 w-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={isLoading}
+                      onClick={() => handleAction('start_progress', task.id)}
+                      className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                      title="Focar nesta tarefa"
+                    >
+                      <Play className="h-3 w-3" /> Focar
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => setCompletingTask(task)}
+                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold disabled:opacity-40 ${
+                      isInProgress
+                        ? 'bg-amber-600 text-white hover:bg-amber-700'
+                        : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                    title="Concluir tarefa"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" /> Concluir
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+
+            return isLoading ? (
+              <div key={task.id} className="card-loading-wrap shadow-sm">
+                {cardContent}
+              </div>
+            ) : (
+              <React.Fragment key={task.id}>{cardContent}</React.Fragment>
+            );
+          })}
         </section>
       )}
 
@@ -449,7 +466,6 @@ export const MeuDia: React.FC = () => {
       )}
 
       {!hasBriefingData &&
-        !jarvisState?.in_progress?.length &&
         sortedTasksByPriority.length === 0 &&
         listsAndNotes.length === 0 && (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-8 text-center">

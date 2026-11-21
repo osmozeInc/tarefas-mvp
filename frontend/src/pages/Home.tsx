@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { cache } from '../services/cache';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Users, CheckSquare, X } from 'lucide-react';
+import { Plus, Users, CheckSquare, X, GripVertical } from 'lucide-react';
 import api from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { SpacesListSkeleton } from '../components/Skeletons';
 import { SpaceIcon, SPACE_ICON_OPTIONS } from '../components/SpaceIcon';
 
 interface House {
@@ -15,12 +16,13 @@ interface House {
   members_count: number;
   pending_tasks_count: number;
   members?: { id: number; name: string; email: string }[];
-  pivot: { role: string };
+  pivot: { role: string; position?: number };
 }
 
 export const Home: React.FC = () => {
   const { user } = useAuth();
   const [houses, setHouses] = useState<House[]>(() => cache.get('houses_list', []));
+  const [loading, setLoading] = useState(() => cache.get('houses_list', []).length === 0);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState<'create' | 'join'>('create');
@@ -35,20 +37,144 @@ export const Home: React.FC = () => {
   const [inviteCode, setInviteCode] = useState('');
   const [notifyEntry, setNotifyEntry] = useState(true);
 
+  // Controle de Drag & Drop (funciona com toque/segurar no celular e mouse no PC)
+  const [draggingId, setDraggingId] = useState<number | null>(null);
+  const housesRef = useRef<House[]>(houses);
+  const cardRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const holdTimerRef = useRef<number | null>(null);
+  const startYRef = useRef(0);
+  const wasDraggingRef = useRef(false);
+  const orderChangedRef = useRef(false);
+
   const navigate = useNavigate();
 
+  useEffect(() => {
+    housesRef.current = houses;
+  }, [houses]);
+
   const loadHouses = async () => {
-    const { data } = await api.get('/jarvis/state');
-    if (data?.spaces) {
-      setHouses(data.spaces);
-      cache.set('houses_list', data.spaces);
-      cache.set('meu_dia', data);
+    try {
+      const { data } = await api.get('/jarvis/state');
+      if (data?.spaces) {
+        setHouses(data.spaces);
+        cache.set('houses_list', data.spaces);
+        cache.set('meu_dia', data);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
     loadHouses();
   }, []);
+
+  // Listeners globais enquanto um card está sendo arrastado
+  useEffect(() => {
+    if (draggingId === null) return;
+
+    const handleMove = (clientY: number) => {
+      const currentList = [...housesRef.current];
+      const draggedIndex = currentList.findIndex((h) => h.id === draggingId);
+      if (draggedIndex === -1) return;
+
+      for (let i = 0; i < currentList.length; i++) {
+        if (i === draggedIndex) continue;
+        const el = cardRefs.current[currentList[i].id];
+        if (!el) continue;
+        const rect = el.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+
+        if ((i < draggedIndex && clientY < midY) || (i > draggedIndex && clientY > midY)) {
+          const [moved] = currentList.splice(draggedIndex, 1);
+          currentList.splice(i, 0, moved);
+          housesRef.current = currentList;
+          orderChangedRef.current = true;
+          setHouses(currentList);
+          break;
+        }
+      }
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      handleMove(e.clientY);
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches[0]) {
+        e.preventDefault(); // Evita rolar a página no iOS enquanto arrasta o espaço
+        handleMove(e.touches[0].clientY);
+      }
+    };
+
+    const finishDrag = async () => {
+      setDraggingId(null);
+      setTimeout(() => {
+        wasDraggingRef.current = false;
+      }, 100);
+
+      if (orderChangedRef.current) {
+        orderChangedRef.current = false;
+        const ordered = housesRef.current;
+        cache.set('houses_list', ordered);
+        const cachedMeuDia = cache.get<any>('meu_dia', null);
+        if (cachedMeuDia) {
+          cache.set('meu_dia', { ...cachedMeuDia, spaces: ordered });
+        }
+
+        try {
+          await api.post('/jarvis/action', {
+            action: 'reorder_spaces',
+            space_ids: ordered.map((h) => h.id),
+          });
+        } catch (err) {
+          console.error('Erro ao salvar ordem dos espaços', err);
+        }
+      }
+    };
+
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('pointerup', finishDrag);
+    window.addEventListener('pointercancel', finishDrag);
+
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('pointerup', finishDrag);
+      window.removeEventListener('pointercancel', finishDrag);
+    };
+  }, [draggingId]);
+
+  const startDragImmediate = (houseId: number) => {
+    wasDraggingRef.current = true;
+    orderChangedRef.current = false;
+    if (navigator.vibrate) navigator.vibrate(15);
+    setDraggingId(houseId);
+  };
+
+  const handleCardPointerDown = (houseId: number, e: React.PointerEvent) => {
+    startYRef.current = e.clientY;
+    if (holdTimerRef.current) window.clearTimeout(holdTimerRef.current);
+    holdTimerRef.current = window.setTimeout(() => {
+      startDragImmediate(houseId);
+    }, 240);
+  };
+
+  const handleCardPointerMoveBeforeDrag = (e: React.PointerEvent) => {
+    if (draggingId !== null || !holdTimerRef.current) return;
+    if (Math.abs(e.clientY - startYRef.current) > 8) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
+
+  const cancelHoldTimer = () => {
+    if (holdTimerRef.current) {
+      window.clearTimeout(holdTimerRef.current);
+      holdTimerRef.current = null;
+    }
+  };
 
   const knownContacts = useMemo(() => {
     const map = new Map<number, { id: number; name: string; email: string }>();
@@ -108,7 +234,9 @@ export const Home: React.FC = () => {
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Meus Espaços</h1>
-          <p className="text-xs text-slate-500">Toque em um card para abrir o espaço</p>
+          <p className="text-xs text-slate-500">
+            Segure e arraste um card para reordenar
+          </p>
         </div>
 
         <button
@@ -119,40 +247,76 @@ export const Home: React.FC = () => {
         </button>
       </header>
 
-      <div className="space-y-3">
-        {houses.map((house) => (
-          <div
-            key={house.id}
-            onClick={() => navigate(`/houses/${house.id}`)}
-            className="cursor-pointer rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm transition active:scale-[0.99]"
-          >
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-2.5">
-                <div className="mt-0.5 rounded-lg bg-slate-100 p-2 text-slate-700">
-                  <SpaceIcon icon={house.icon} className="h-4 w-4" />
+      {loading ? (
+        <SpacesListSkeleton />
+      ) : (
+        <div className="space-y-3 select-none">
+          {houses.map((house) => {
+            const isDragging = draggingId === house.id;
+            return (
+              <div
+                key={house.id}
+                ref={(el) => {
+                  cardRefs.current[house.id] = el;
+                }}
+                onPointerDown={(e) => handleCardPointerDown(house.id, e)}
+                onPointerMove={handleCardPointerMoveBeforeDrag}
+                onPointerUp={cancelHoldTimer}
+                onPointerCancel={cancelHoldTimer}
+                onClick={() => {
+                  if (wasDraggingRef.current) return;
+                  navigate(`/houses/${house.id}`);
+                }}
+                className={`cursor-pointer rounded-2xl border bg-white p-4 transition-all ${
+                  isDragging
+                    ? 'z-20 scale-[1.02] border-indigo-500 shadow-xl ring-2 ring-indigo-500/20'
+                    : 'border-slate-200/80 shadow-sm active:scale-[0.99]'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2.5">
+                    <button
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        cancelHoldTimer();
+                        startDragImmediate(house.id);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="mt-1 -ml-1 touch-none cursor-grab p-1 text-slate-300 hover:text-slate-500 active:cursor-grabbing"
+                      title="Arrastar para reordenar"
+                    >
+                      <GripVertical className="h-4 w-4" />
+                    </button>
+                    <div className="mt-0.5 rounded-lg bg-slate-100 p-2 text-slate-700">
+                      <SpaceIcon icon={house.icon} className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-slate-900">{house.name}</h3>
+                      {house.description && (
+                        <p className="text-xs text-slate-500">{house.description}</p>
+                      )}
+                    </div>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-indigo-600">
+                    {house.pivot?.role === 'owner' ? 'Admin' : 'Membro'}
+                  </span>
                 </div>
-                <div>
-                  <h3 className="font-semibold text-slate-900">{house.name}</h3>
-                  {house.description && <p className="text-xs text-slate-500">{house.description}</p>}
+
+                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
+                  <span className="flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5" /> {house.members_count} participantes
+                  </span>
+                  <span className="flex items-center gap-1 font-medium text-amber-600">
+                    <CheckSquare className="h-3.5 w-3.5" /> {house.pending_tasks_count} pendentes
+                  </span>
+                  <span className="font-mono text-[11px] text-slate-400">#{house.invite_code}</span>
                 </div>
               </div>
-              <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-indigo-600">
-                {house.pivot?.role === 'owner' ? 'Admin' : 'Membro'}
-              </span>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-500">
-              <span className="flex items-center gap-1">
-                <Users className="h-3.5 w-3.5" /> {house.members_count} participantes
-              </span>
-              <span className="flex items-center gap-1 font-medium text-amber-600">
-                <CheckSquare className="h-3.5 w-3.5" /> {house.pending_tasks_count} pendentes
-              </span>
-              <span className="font-mono text-[11px] text-slate-400">#{house.invite_code}</span>
-            </div>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      )}
 
       {modalOpen && (
         <div

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { HouseDetailSkeleton } from '../components/Skeletons';
 import { useParams, useNavigate } from 'react-router-dom';
 import { cache } from '../services/cache';
 import {
@@ -68,6 +69,8 @@ export const HouseDetail: React.FC = () => {
 
   // Estado do Chat
   const [chatInput, setChatInput] = useState('');
+
+  const [loadingTaskId, setLoadingTaskId] = useState<number | null>(null);
 
   const myRole = house?.members?.find((m: any) => m.id === user?.id)?.pivot?.role || 'guest';
   const canInteract = myRole === 'owner' || myRole === 'resident';
@@ -185,12 +188,17 @@ export const HouseDetail: React.FC = () => {
     if (!canInteract) return;
     setCompletingTask(null);
     setCompletionNote('');
-    await api.post('/jarvis/action', {
-      action,
-      task_id: taskId,
-      completion_note: note || undefined,
-    });
-    await loadData(true);
+    setLoadingTaskId(taskId);
+    try {
+      await api.post('/jarvis/action', {
+        action,
+        task_id: taskId,
+        completion_note: note || undefined,
+      });
+      await loadData(true);
+    } finally {
+      setLoadingTaskId(null);
+    }
   };
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -331,7 +339,7 @@ export const HouseDetail: React.FC = () => {
     };
   }, [tasks, statusFilter, typeFilter, whenFilter, search, user?.id]);
 
-  if (!house) return <div className="p-8 text-center text-sm text-slate-500">Carregando espaço...</div>;
+  if (!house) return <HouseDetailSkeleton />;
 
   const whenLabelMap: Record<string, string> = {
     all: 'Quando',
@@ -489,75 +497,88 @@ export const HouseDetail: React.FC = () => {
           ) : (
             <>
               {/* 1. TAREFAS (Largura total, sem bolinhas ou emojis, ordenadas por urgência) */}
-              {sortedTasksOnly.length > 0 && (
-                <div className="space-y-2">
-                  {sortedTasksOnly.map((task) => {
-                    const isInProgress = Boolean(task.in_progress_by && !task.completed_at);
+                {sortedTasksOnly.length > 0 && (
+                  <div className="space-y-2">
+                    {sortedTasksOnly.map((task) => {
+                      const isInProgress = Boolean(task.in_progress_by && !task.completed_at);
+                      const isLoading = loadingTaskId === task.id;
 
-                    return (
-                      <div
-                        key={task.id}
-                        onClick={() => openDetailModal(task)}
-                        className={`flex cursor-pointer items-center justify-between gap-3 rounded-2xl border p-3.5 shadow-2xs transition active:scale-[0.99] ${
-                          isInProgress
-                            ? 'border-2 border-amber-300 bg-amber-50/90'
-                            : 'border-slate-200/80 bg-white'
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            {isInProgress && <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
-                            <p
-                              className={`truncate text-sm font-semibold ${
-                                task.completed_at ? 'line-through text-slate-400' : 'text-slate-800'
-                              }`}
-                            >
-                              {task.title}
+                      const card = (
+                        <div
+                          onClick={() => !isLoading && openDetailModal(task)}
+                          className={`flex cursor-pointer items-center justify-between gap-3 p-3.5 transition active:scale-[0.99] ${
+                            isLoading
+                              ? 'card-loading-inner bg-white'
+                              : isInProgress
+                              ? 'rounded-2xl border-2 border-amber-300 bg-amber-50/90 shadow-2xs'
+                              : 'rounded-2xl border border-slate-200/80 bg-white shadow-2xs'
+                          }`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              {isInProgress && <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />}
+                              <p
+                                className={`truncate text-sm font-semibold ${
+                                  task.completed_at ? 'line-through text-slate-400' : 'text-slate-800'
+                                }`}
+                              >
+                                {task.title}
+                              </p>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-slate-400">
+                              Tarefa
+                              {task.due_date
+                                ? ` • ${new Date(task.due_date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
+                                : ''}
+                              {task.assignee ? ` • ${task.assignee.name}` : ''}
                             </p>
                           </div>
-                          <p className="mt-0.5 text-[11px] text-slate-400">
-                            Tarefa
-                            {task.due_date
-                              ? ` • ${new Date(task.due_date).toLocaleDateString('pt-BR', { timeZone: 'UTC' })}`
-                              : ''}
-                            {task.assignee ? ` • ${task.assignee.name}` : ''}
-                          </p>
-                        </div>
 
-                        {canInteract && !task.completed_at && (
-                          <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                            {isInProgress ? (
+                          {canInteract && !task.completed_at && (
+                            <div className="flex shrink-0 items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                              {isInProgress ? (
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleTaskAction('stop_progress', task.id)}
+                                  className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100 disabled:opacity-40"
+                                  title="Pausar foco"
+                                >
+                                  <Pause className="h-3.5 w-3.5" />
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() => handleTaskAction('start_progress', task.id)}
+                                  className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-40"
+                                >
+                                  <Play className="h-3 w-3" /> Focar
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => handleTaskAction('stop_progress', task.id)}
-                                className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100"
-                                title="Pausar foco"
+                                disabled={isLoading}
+                                onClick={() => setCompletingTask(task)}
+                                className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"
                               >
-                                <Pause className="h-3.5 w-3.5" />
+                                <CheckCircle2 className="h-3.5 w-3.5" /> Concluir
                               </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleTaskAction('start_progress', task.id)}
-                                className="flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                              >
-                                <Play className="h-3 w-3" /> Focar
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setCompletingTask(task)}
-                              className="flex items-center gap-1 rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                            >
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Concluir
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+
+                      return isLoading ? (
+                        <div key={task.id} className="card-loading-wrap shadow-sm">
+                          {card}
+                        </div>
+                      ) : (
+                        <React.Fragment key={task.id}>{card}</React.Fragment>
+                      );
+                    })}
+                  </div>
+                )}
 
               {/* 2. LISTAS (Metade da largura da tela: grid-cols-2) */}
               {sortedListsOnly.length > 0 && (
@@ -611,7 +632,7 @@ export const HouseDetail: React.FC = () => {
                 />
               )}
 
-              <div className="fixed bottom-20 right-5 z-40 flex flex-col items-end gap-2">
+              <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom)*0.55)] right-5 z-40 flex flex-col items-end gap-2">
                 {fabMenuOpen && (
                   <div className="mb-1 flex flex-col items-end gap-2">
                     <button
@@ -721,6 +742,7 @@ export const HouseDetail: React.FC = () => {
             initialType={createType}
             spaces={spacesWithCurrent}
             defaultSpaceId={Number(id)}
+            onUncomplete={canInteract ? (taskId) => handleTaskAction('uncomplete', taskId) : undefined}
           />
 
           {completingTask && (
@@ -802,7 +824,7 @@ export const HouseDetail: React.FC = () => {
           {canInteract ? (
             <form
               onSubmit={handleSendMessage}
-              className="fixed bottom-16 left-0 right-0 z-20 mx-auto flex max-w-md gap-2 border-t border-slate-200 bg-slate-50 p-3"
+              className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom)*0.55)] left-0 right-0 z-20 mx-auto flex max-w-md gap-2 border-t border-slate-200 bg-slate-50 p-3"
             >
               <input
                 type="text"
@@ -819,7 +841,7 @@ export const HouseDetail: React.FC = () => {
               </button>
             </form>
           ) : (
-            <div className="fixed bottom-16 left-0 right-0 mx-auto max-w-md bg-amber-50 p-2.5 text-center text-xs text-amber-800">
+            <div className="fixed bottom-[calc(3.5rem+env(safe-area-inset-bottom)*0.55)] left-0 right-0 mx-auto max-w-md bg-amber-50 p-2.5 text-center text-xs text-amber-800">
               Modo Visitante: você pode apenas visualizar o chat.
             </div>
           )}

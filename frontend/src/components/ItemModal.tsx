@@ -12,6 +12,7 @@ import {
   FileText,
   Pencil,
   AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 
 export interface ChecklistItem {
@@ -26,6 +27,7 @@ interface ItemModalProps {
   onClose: () => void;
   onSave: (payload: any) => Promise<void>;
   onDelete?: (taskId: number) => Promise<void>;
+  onUncomplete?: (taskId: number) => Promise<void>;
   initialItem?: any | null;
   initialType?: 'task' | 'list' | 'note' | null;
   spaces: any[];
@@ -59,6 +61,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   onClose,
   onSave,
   onDelete,
+  onUncomplete,
   initialItem,
   initialType = null,
   spaces,
@@ -67,6 +70,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   const [mode, setMode] = useState<'view' | 'edit'>('edit');
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [reopening, setReopening] = useState(false);
 
   const [type, setType] = useState<'task' | 'list' | 'note'>('task');
   const [houseId, setHouseId] = useState<number | ''>('');
@@ -79,7 +83,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   const [customUnit, setCustomUnit] = useState<'days' | 'weeks' | 'months'>('days');
 
   const [dueDate, setDueDate] = useState('');
-  const [assignedTo, setAssignedTo] = useState<string>('');
+  const [assignedIds, setAssignedIds] = useState<number[]>([]);
   const [mentionedIds, setMentionedIds] = useState<number[]>([]);
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
   const [newStepText, setNewStepText] = useState('');
@@ -91,11 +95,14 @@ export const ItemModal: React.FC<ItemModalProps> = ({
 
   const submitLockRef = useRef(false);
 
+  const isCompleted = Boolean(initialItem?.completed_at);
+
   useEffect(() => {
     if (!isOpen) {
       submitLockRef.current = false;
       setConfirmDeleteOpen(false);
       setDeleting(false);
+      setReopening(false);
       return;
     }
 
@@ -122,7 +129,15 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       }
 
       setDueDate(initialItem.due_date ? String(initialItem.due_date).substring(0, 10) : '');
-      setAssignedTo(initialItem.assigned_to ? String(initialItem.assigned_to) : '');
+
+      if (Array.isArray(initialItem.assignees) && initialItem.assignees.length > 0) {
+        setAssignedIds(initialItem.assignees.map((u: any) => u.id));
+      } else if (initialItem.assigned_to) {
+        setAssignedIds([Number(initialItem.assigned_to)]);
+      } else {
+        setAssignedIds([]);
+      }
+
       setMentionedIds(
         initialItem.mentioned_users ? initialItem.mentioned_users.map((u: any) => u.id) : []
       );
@@ -142,7 +157,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       setCustomInterval(2);
       setCustomUnit('days');
       setDueDate('');
-      setAssignedTo('');
+      setAssignedIds([]);
       setMentionedIds([]);
       setChecklist([]);
       setListMode('checklist');
@@ -173,6 +188,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   };
 
   const toggleStep = async (stepId: string) => {
+    if (isCompleted) return;
     if (type === 'list' && listMode === 'items') return;
     const updated = checklist.map((item) =>
       item.id === stepId ? { ...item, done: !item.done } : item
@@ -209,8 +225,20 @@ export const ItemModal: React.FC<ItemModalProps> = ({
     }
   };
 
+  const handleUncomplete = async () => {
+    if (!initialItem?.id || !onUncomplete || reopening) return;
+    setReopening(true);
+    try {
+      await onUncomplete(initialItem.id);
+      onClose();
+    } finally {
+      setReopening(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isCompleted) return;
     if (!title.trim() || submitLockRef.current || saving) return;
 
     submitLockRef.current = true;
@@ -251,7 +279,8 @@ export const ItemModal: React.FC<ItemModalProps> = ({
         priority: type === 'task' ? priority : 'medium',
         recurrence: finalRecurrence,
         due_date: type === 'task' && dueDate ? dueDate : null,
-        assigned_to: type === 'task' && assignedTo ? Number(assignedTo) : null,
+        assigned_to: type === 'task' ? (assignedIds[0] ?? null) : null,
+        assigned_to_ids: type === 'task' ? assignedIds : [],
         mentioned_user_ids: type === 'task' ? mentionedIds : [],
         checklist: type !== 'note' ? finalChecklist : [],
         is_numbered: type === 'list' ? isNumbered : false,
@@ -270,8 +299,10 @@ export const ItemModal: React.FC<ItemModalProps> = ({
     return 'Média';
   };
 
-  const assigneeObj =
-    members.find((m: any) => m.id === Number(assignedTo)) || initialItem?.assignee;
+  const assignedObjects =
+    initialItem?.assignees?.length > 0
+      ? initialItem.assignees
+      : members.filter((m: any) => assignedIds.includes(m.id));
   const mentionedObjects = members.filter((m: any) => mentionedIds.includes(m.id));
   const recLabel = formatRecurrenceLabel(
     recurrence === 'custom' ? `custom:${customInterval}:${customUnit}` : recurrence
@@ -292,26 +323,45 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       onClick={onClose}
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-xs"
     >
-      {/* ==================== MODO 1: VISUALIZAÇÃO EM TEXTO E COLUNAS (SEM TAGS) ==================== */}
+      {/* ==================== MODO 1: VISUALIZAÇÃO LIMPA ==================== */}
       {mode === 'view' && initialItem ? (
         <div
           onClick={(e) => e.stopPropagation()}
           className="flex min-h-[75dvh] max-h-[88dvh] w-full max-w-md flex-col rounded-t-3xl bg-white p-5 shadow-2xl"
         >
-          {/* Cabeçalho */}
           <div className="mb-4 flex items-center justify-between border-b border-slate-100 pb-3">
             <h3 className="text-base font-bold text-slate-900">
-              {type === 'list' ? 'Detalhes da Lista' : type === 'note' ? 'Detalhes da Nota' : 'Detalhes da Tarefa'}
+              {type === 'list'
+                ? 'Detalhes da Lista'
+                : type === 'note'
+                ? 'Detalhes da Nota'
+                : 'Detalhes da Tarefa'}
             </h3>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setMode('edit')}
-                className="flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-              >
-                <Pencil className="h-3.5 w-3.5" /> Editar
-              </button>
+            <div className="flex items-center gap-1.5">
+              {/* Tarefas concluídas NÃO podem ser editadas; exibem botão de Reabrir */}
+              {isCompleted ? (
+                onUncomplete && (
+                  <button
+                    type="button"
+                    disabled={reopening}
+                    onClick={handleUncomplete}
+                    className="flex items-center gap-1 rounded-xl bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    {reopening ? 'Reabrindo...' : 'Reabrir'}
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setMode('edit')}
+                  className="flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
+                >
+                  <Pencil className="h-3.5 w-3.5" /> Editar
+                </button>
+              )}
+
               {onDelete && (
                 <button
                   type="button"
@@ -321,6 +371,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   <Trash2 className="h-3.5 w-3.5" /> Excluir
                 </button>
               )}
+
               <button
                 type="button"
                 onClick={onClose}
@@ -331,17 +382,36 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             </div>
           </div>
 
-          {/* Corpo Estruturado em Linhas e Colunas (Texto Puro) */}
           <div className="flex-1 space-y-4 overflow-y-auto pr-1">
-            {/* Linha: Espaço e Tipo */}
+            {/* Registro de Conclusão (quando concluída) */}
+            {isCompleted && (
+              <div className="space-y-1.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3.5">
+                <p className="text-xs font-bold text-emerald-800">Tarefa Concluída</p>
+                <p className="text-xs text-emerald-900">
+                  Concluída por:{' '}
+                  <strong>
+                    {initialItem.completer?.nickname ||
+                      initialItem.completer?.name ||
+                      'Não registrado'}
+                  </strong>{' '}
+                  em {new Date(initialItem.completed_at).toLocaleDateString('pt-BR')}
+                </p>
+                {initialItem.completion_note && (
+                  <p className="pt-1 text-xs text-emerald-800 whitespace-pre-wrap">
+                    Observação: {initialItem.completion_note}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-3">
               <div>
                 <span className="block text-[11px] font-medium text-slate-400">Espaço</span>
                 <p className="mt-0.5 text-sm font-medium text-slate-800">
-                    <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1.5">
                     <SpaceIcon icon={currentSpace?.icon} className="h-3.5 w-3.5 text-slate-600" />
                     <span>{currentSpace?.name || '—'}</span>
-                    </span>
+                  </span>
                 </p>
               </div>
               <div>
@@ -352,13 +422,11 @@ export const ItemModal: React.FC<ItemModalProps> = ({
               </div>
             </div>
 
-            {/* Linha: Título */}
             <div className="border-b border-slate-100 pb-3">
               <span className="block text-[11px] font-medium text-slate-400">Título</span>
               <p className="mt-0.5 text-base font-semibold text-slate-900">{title}</p>
             </div>
 
-            {/* ==================== DETALHES DE TAREFA ==================== */}
             {type === 'task' && (
               <>
                 <div className="border-b border-slate-100 pb-3">
@@ -368,7 +436,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   </p>
                 </div>
 
-                {/* Etapas / Checklist */}
                 {checklist.length > 0 && (
                   <div className="space-y-2 border-b border-slate-100 pb-3">
                     <span className="block text-[11px] font-medium text-slate-400">
@@ -379,7 +446,9 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                         <div
                           key={item.id}
                           onClick={() => toggleStep(item.id)}
-                          className="flex cursor-pointer items-center gap-2.5 py-1 text-sm hover:opacity-80"
+                          className={`flex items-center gap-2.5 py-1 text-sm ${
+                            isCompleted ? 'opacity-75' : 'cursor-pointer hover:opacity-80'
+                          }`}
                         >
                           {item.done ? (
                             <CheckSquare className="h-4 w-4 shrink-0 text-emerald-600" />
@@ -395,7 +464,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   </div>
                 )}
 
-                {/* Linha 1: Prioridade e Repetição */}
                 <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-3">
                   <div>
                     <span className="block text-[11px] font-medium text-slate-400">Prioridade</span>
@@ -409,12 +477,13 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   </div>
                 </div>
 
-                {/* Linha 2: Responsável e Prazo */}
                 <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-3">
                   <div>
-                    <span className="block text-[11px] font-medium text-slate-400">Responsável</span>
+                    <span className="block text-[11px] font-medium text-slate-400">Responsáveis</span>
                     <p className="mt-0.5 text-sm font-medium text-slate-800">
-                      {assigneeObj ? assigneeObj.name : 'Qualquer pessoa'}
+                      {assignedObjects.length > 0
+                        ? assignedObjects.map((m: any) => m.name).join(', ')
+                        : 'Qualquer pessoa'}
                     </p>
                   </div>
                   <div>
@@ -427,7 +496,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   </div>
                 </div>
 
-                {/* Menções em texto puro */}
                 <div>
                   <span className="block text-[11px] font-medium text-slate-400">
                     Participantes mencionados
@@ -441,7 +509,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
               </>
             )}
 
-            {/* ==================== DETALHES DE LISTA ==================== */}
             {type === 'list' && (
               <>
                 <div className="grid grid-cols-2 gap-4 border-b border-slate-100 pb-3">
@@ -470,7 +537,9 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                           key={item.id}
                           onClick={() => toggleStep(item.id)}
                           className={`flex items-center gap-2.5 border-b border-slate-100 py-2 text-sm ${
-                            listMode === 'items' ? '' : 'cursor-pointer hover:opacity-80'
+                            listMode === 'items' || isCompleted
+                              ? ''
+                              : 'cursor-pointer hover:opacity-80'
                           }`}
                         >
                           {listMode === 'items' ? (
@@ -494,7 +563,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
               </>
             )}
 
-            {/* ==================== DETALHES DE NOTA ==================== */}
             {type === 'note' && (
               <div>
                 <span className="block text-[11px] font-medium text-slate-400">Descrição da Nota</span>
@@ -564,7 +632,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                 value={houseId}
                 onChange={(e) => {
                   setHouseId(Number(e.target.value));
-                  setAssignedTo('');
+                  setAssignedIds([]);
                   setMentionedIds([]);
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-medium"
@@ -728,45 +796,70 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Responsável</label>
-                    <select
-                      value={assignedTo}
-                      onChange={(e) => setAssignedTo(e.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs"
-                    >
-                      <option value="">Qualquer pessoa</option>
-                      {members.map((m: any) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
+                {/* Prazo */}
+                <div>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="text-[11px] font-medium text-slate-500">Prazo (Opcional)</label>
+                    {dueDate && (
+                      <button
+                        type="button"
+                        onClick={() => setDueDate('')}
+                        className="text-[10px] font-semibold text-red-500 hover:underline"
+                      >
+                        Remover
+                      </button>
+                    )}
                   </div>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs"
+                  />
+                </div>
 
-                  <div className="min-w-0">
-                    <div className="mb-1 flex items-center justify-between">
-                      <label className="text-[11px] font-medium text-slate-500">Prazo (Opcional)</label>
-                      {dueDate && (
+                {/* Múltiplos Responsáveis */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium text-slate-500">
+                    Responsáveis (Selecione um ou mais; nenhum = Qualquer pessoa):
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setAssignedIds([])}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        assignedIds.length === 0
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-600'
+                      }`}
+                    >
+                      Qualquer pessoa
+                    </button>
+                    {members.map((m: any) => {
+                      const selected = assignedIds.includes(m.id);
+                      return (
                         <button
                           type="button"
-                          onClick={() => setDueDate('')}
-                          className="text-[10px] font-semibold text-red-500 hover:underline"
+                          key={m.id}
+                          onClick={() =>
+                            setAssignedIds(
+                              selected
+                                ? assignedIds.filter((i) => i !== m.id)
+                                : [...assignedIds, m.id]
+                            )
+                          }
+                          className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                            selected ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600'
+                          }`}
                         >
-                          Remover
+                          {m.name}
                         </button>
-                      )}
-                    </div>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs"
-                    />
+                      );
+                    })}
                   </div>
                 </div>
 
+                {/* Menções */}
                 <div>
                   <p className="mb-1.5 text-[11px] font-medium text-slate-500">
                     Mencionar participantes (Envia alerta Push):

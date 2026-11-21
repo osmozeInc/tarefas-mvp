@@ -12,13 +12,14 @@ class Task extends Model
         'house_id',
         'created_by',
         'assigned_to',
+        'completed_by',
         'title',
         'description',
         'priority',
         'recurrence',
         'due_date',
         'completed_at',
-        'type', // task, list, note
+        'type',
         'checklist',
         'is_numbered',
         'is_completed',
@@ -27,6 +28,11 @@ class Task extends Model
         'notify_at',
         'notified',
         'points',
+    ];
+
+    protected $with = [
+        'assignees:id,name,nickname',
+        'completer:id,name,nickname',
     ];
 
     protected function casts(): array
@@ -55,6 +61,16 @@ class Task extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function assignees(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'task_assignees')->withTimestamps();
+    }
+
+    public function completer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'completed_by');
     }
 
     public function doingUser(): BelongsTo
